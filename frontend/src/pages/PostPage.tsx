@@ -1,89 +1,302 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import api from '../lib/api'
 import { Post, Comment } from '../types'
 import CommentTree from '../components/ui/CommentTree'
 import { useAuthStore } from '../store/authStore'
 
+function countComments(comments: Comment[]): number {
+  return comments.reduce(
+    (total, comment) =>
+      total + 1 + countComments(comment.replies ?? []),
+    0
+  )
+}
+
 export default function PostPage() {
   const { id } = useParams<{ id: string }>()
-  const user = useAuthStore((s) => s.user)
+  const user = useAuthStore((state) => state.user)
+
   const [post, setPost] = useState<Post | null>(null)
   const [comments, setComments] = useState<Comment[]>([])
   const [newComment, setNewComment] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [commentError, setCommentError] = useState('')
 
-  useEffect(() => {
-    const fetch = async () => {
-      try {
-        const [pRes, cRes] = await Promise.all([
-          api.get(`/posts/${id}`),
-          api.get(`/comments/${id}`),
-        ])
-        setPost(pRes.data)
-        setComments(cRes.data)
-      } catch {
-        setError('Failed to load post.')
-      }
-    }
-    fetch()
+  const fetchComments = useCallback(async () => {
+    if (!id) return
+
+    const response = await api.get<Comment[]>(`/comments/${id}`)
+    setComments(response.data)
   }, [id])
 
+  const fetchPost = useCallback(async () => {
+    if (!id) {
+      setError('Invalid post link.')
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const [postResponse, commentsResponse] = await Promise.all([
+        api.get<Post>(`/posts/${id}`),
+        api.get<Comment[]>(`/comments/${id}`),
+      ])
+
+      setPost(postResponse.data)
+      setComments(commentsResponse.data)
+    } catch {
+      setError('Unable to load this discussion. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
+
+  useEffect(() => {
+    void fetchPost()
+  }, [fetchPost])
+
   const submitComment = async () => {
-    if (!newComment.trim()) return
-    const res = await api.post(`/comments/${id}`, { content: newComment })
-    setComments((prev) => [{ ...res.data, replies: [] }, ...prev])
-    setNewComment('')
+    const content = newComment.trim()
+
+    if (!id || !content || submitting) return
+
+    if (content.length > 5000) {
+      setCommentError('Comments must be 5,000 characters or fewer.')
+      return
+    }
+
+    setSubmitting(true)
+    setCommentError('')
+
+    try {
+      await api.post(`/comments/${id}`, { content })
+      setNewComment('')
+      await fetchComments()
+    } catch {
+      setCommentError('Could not post your comment. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  const handleReplyAdded = (reply: Comment, parentId: string) => {
-    const addReply = (list: Comment[]): Comment[] =>
-      list.map((c) =>
-        c.id === parentId
-          ? { ...c, replies: [...(c.replies || []), { ...reply, replies: [] }] }
-          : { ...c, replies: addReply(c.replies || []) }
+  const handleReplyAdded = async (
+    _reply: Comment,
+    _parentId: string
+  ) => {
+    try {
+      await fetchComments()
+    } catch {
+      setCommentError(
+        'Your reply may have been saved, but the comments could not refresh.'
       )
-    setComments((prev) => addReply(prev))
+    }
   }
 
-  if (error) return <p className="text-red-500 text-sm">{error}</p>
-  if (!post) return <p className="text-gray-500">Loading...</p>
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-4">
+        <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="mb-4 h-3 w-32 rounded bg-slate-200" />
+          <div className="mb-3 h-7 w-3/4 rounded bg-slate-200" />
+          <div className="h-4 w-full rounded bg-slate-100" />
+          <div className="mt-2 h-4 w-2/3 rounded bg-slate-100" />
+        </div>
+        <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-6">
+          <div className="h-4 w-40 rounded bg-slate-200" />
+          <div className="mt-4 h-20 rounded bg-slate-100" />
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !post) {
+    return (
+      <div className="mx-auto max-w-3xl rounded-2xl border border-rose-100 bg-white p-8 text-center">
+        <p className="text-sm text-rose-600">
+          {error || 'This post could not be found.'}
+        </p>
+        <button
+          type="button"
+          onClick={() => void fetchPost()}
+          className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+
+  const totalComments = countComments(comments)
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
-        <div className="text-xs text-gray-500 mb-2">Posted by {post.author?.username}</div>
-        <h1 className="text-xl font-bold text-gray-900 mb-2">{post.title}</h1>
-        {post.content && <p className="text-gray-700 text-sm leading-relaxed">{post.content}</p>}
-        <div className="flex gap-4 mt-3 text-sm text-gray-500">
-          <span>{post.upvotes - post.downvotes} points</span>
-          <span>{comments.length} comments</span>
-        </div>
-      </div>
+    <main className="mx-auto max-w-3xl space-y-5">
+      <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="p-5 sm:p-7">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
+              Discussion
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Posted by{' '}
+              {post.author?.username ? (
+                <Link
+                  to={`/u/${post.author.username}`}
+                  className="font-semibold text-slate-700 hover:text-blue-700"
+                >
+                  {post.author.username}
+                </Link>
+              ) : (
+                'Unknown user'
+              )}
+            </span>
+            <span aria-hidden="true">·</span>
+            <time dateTime={post.created_at}>
+              {new Date(post.created_at).toLocaleDateString()}
+            </time>
+          </div>
 
-      {user && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-          <textarea
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            placeholder="Add a comment..."
-            rows={3}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-500 resize-none"
-          />
-          <button
-            onClick={submitComment}
-            className="mt-2 bg-brand-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-brand-700"
+          <h1 className="break-words text-2xl font-bold leading-tight tracking-tight text-slate-900 sm:text-3xl">
+            {post.title}
+          </h1>
+
+          {post.content && (
+            <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-slate-600 sm:text-base">
+              {post.content}
+            </p>
+          )}
+
+          {post.image_url && (
+            <img
+              src={post.image_url}
+              alt="Post attachment"
+              loading="lazy"
+              className="mt-5 max-h-[480px] w-full rounded-xl border border-slate-100 object-contain"
+            />
+          )}
+
+          <div className="mt-6 flex items-center gap-5 border-t border-slate-100 pt-4 text-sm text-slate-500">
+            <span className="font-semibold text-slate-700">
+              {post.upvotes - post.downvotes} points
+            </span>
+            <span>
+              {totalComments} {totalComments === 1 ? 'comment' : 'comments'}
+            </span>
+          </div>
+        </div>
+      </article>
+
+      <section
+        aria-labelledby="comments-heading"
+        className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-7"
+      >
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <h2
+              id="comments-heading"
+              className="text-lg font-bold text-slate-900"
+            >
+              Discussion
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Share your thoughts and join the conversation.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {totalComments}
+          </span>
+        </div>
+
+        {user ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitComment()
+            }}
+            className="mb-6"
           >
-            Comment
-          </button>
-        </div>
-      )}
+            <label
+              htmlFor="new-comment"
+              className="mb-2 block text-sm font-semibold text-slate-700"
+            >
+              Add a comment
+            </label>
+            <textarea
+              id="new-comment"
+              value={newComment}
+              onChange={(event) => {
+                setNewComment(event.target.value)
+                if (commentError) setCommentError('')
+              }}
+              placeholder="What are your thoughts?"
+              rows={4}
+              maxLength={5000}
+              disabled={submitting}
+              className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50 disabled:opacity-60"
+            />
 
-      <div>
-        {comments.map((c) => (
-          <CommentTree key={c.id} comment={c} postId={id!} onReplyAdded={handleReplyAdded} />
-        ))}
-      </div>
-    </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-slate-400">
+                {newComment.length}/5000 characters
+              </span>
+              <button
+                type="submit"
+                disabled={!newComment.trim() || submitting}
+                className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? 'Posting…' : 'Post comment'}
+              </button>
+            </div>
+
+            {commentError && (
+              <p role="alert" className="mt-3 text-sm text-rose-600">
+                {commentError}
+              </p>
+            )}
+          </form>
+        ) : (
+          <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm text-slate-600">
+              Log in to share your thoughts or reply to a comment.
+            </p>
+            <Link
+              to="/login"
+              className="mt-3 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+            >
+              Log in
+            </Link>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {comments.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 px-5 py-10 text-center">
+              <p className="font-semibold text-slate-700">
+                No comments yet
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Be the first to start the conversation.
+              </p>
+            </div>
+          ) : (
+            comments.map((comment) => (
+              <CommentTree
+                key={comment.id}
+                comment={comment}
+                postId={post.id}
+                onReplyAdded={handleReplyAdded}
+              />
+            ))
+          )}
+        </div>
+      </section>
+    </main>
   )
 }
