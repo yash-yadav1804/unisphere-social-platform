@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Post } from '../../types'
 import api from '../../lib/api'
@@ -10,14 +10,36 @@ interface Props {
   onVote?: (postId: string, value: number) => void
 }
 
+type VotePost = Post & {
+  user_vote?: number
+}
+
+type VoteResponse = {
+  action: 'created' | 'updated' | 'removed'
+  user_vote: number
+  upvotes: number | null
+  downvotes: number | null
+}
+
 export default function PostCard({ post, onVote }: Props) {
   const user = useAuthStore((state) => state.user)
+  const votePost = post as VotePost
+
   const [voting, setVoting] = useState(false)
   const [error, setError] = useState('')
+  const [userVote, setUserVote] = useState(votePost.user_vote ?? 0)
+  const [upvotes, setUpvotes] = useState(post.upvotes)
+  const [downvotes, setDownvotes] = useState(post.downvotes)
 
-  const score = post.upvotes - post.downvotes
+  const score = upvotes - downvotes
 
-  const vote = async (value: number) => {
+  useEffect(() => {
+    setUserVote(votePost.user_vote ?? 0)
+    setUpvotes(post.upvotes)
+    setDownvotes(post.downvotes)
+  }, [post.id, post.upvotes, post.downvotes, votePost.user_vote])
+
+  const vote = async (value: 1 | -1) => {
     if (!user) {
       setError('Please log in to vote.')
       return
@@ -29,11 +51,20 @@ export default function PostCard({ post, onVote }: Props) {
     setError('')
 
     try {
-      await api.post('/posts/vote', {
+      const response = await api.post<VoteResponse>('/posts/vote', {
         target_id: post.id,
         target_type: 'post',
         value,
       })
+
+      const result = response.data
+
+      setUserVote(result.user_vote)
+
+      if (result.upvotes !== null && result.downvotes !== null) {
+        setUpvotes(result.upvotes)
+        setDownvotes(result.downvotes)
+      }
 
       onVote?.(post.id, value)
     } catch {
@@ -43,6 +74,16 @@ export default function PostCard({ post, onVote }: Props) {
     }
   }
 
+  const upvoteClass =
+    userVote === 1
+      ? 'bg-blue-100 text-blue-700'
+      : 'text-slate-500 hover:bg-blue-100 hover:text-blue-700'
+
+  const downvoteClass =
+    userVote === -1
+      ? 'bg-rose-100 text-rose-600'
+      : 'text-slate-500 hover:bg-rose-100 hover:text-rose-600'
+
   return (
     <article className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all duration-200 hover:border-slate-300 hover:shadow-md">
       <div className="flex">
@@ -50,10 +91,11 @@ export default function PostCard({ post, onVote }: Props) {
           <button
             type="button"
             aria-label="Upvote post"
-            title="Upvote"
+            aria-pressed={userVote === 1}
+            title={userVote === 1 ? 'Remove upvote' : 'Upvote'}
             disabled={voting}
             onClick={() => void vote(1)}
-            className="rounded-lg px-2 py-1 text-xl leading-none text-slate-500 transition hover:bg-blue-100 hover:text-blue-700 disabled:opacity-50"
+            className={`rounded-lg px-2 py-1 text-xl leading-none transition disabled:cursor-not-allowed disabled:opacity-50 ${upvoteClass}`}
           >
             ▲
           </button>
@@ -68,10 +110,11 @@ export default function PostCard({ post, onVote }: Props) {
           <button
             type="button"
             aria-label="Downvote post"
-            title="Downvote"
+            aria-pressed={userVote === -1}
+            title={userVote === -1 ? 'Remove downvote' : 'Downvote'}
             disabled={voting}
             onClick={() => void vote(-1)}
-            className="rounded-lg px-2 py-1 text-xl leading-none text-slate-500 transition hover:bg-rose-100 hover:text-rose-600 disabled:opacity-50"
+            className={`rounded-lg px-2 py-1 text-xl leading-none transition disabled:cursor-not-allowed disabled:opacity-50 ${downvoteClass}`}
           >
             ▼
           </button>

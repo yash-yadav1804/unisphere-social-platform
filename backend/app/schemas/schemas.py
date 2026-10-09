@@ -3,19 +3,23 @@ from uuid import UUID
 from datetime import datetime
 from typing import Optional
 
+
 class RegisterRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
 
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
 
 class UserOut(BaseModel):
     id: UUID
@@ -24,12 +28,15 @@ class UserOut(BaseModel):
     avatar_url: Optional[str]
     bio: Optional[str]
     created_at: datetime
+
     class Config:
         from_attributes = True
+
 
 class CommunityCreate(BaseModel):
     name: str
     description: Optional[str] = None
+
 
 class CommunityOut(BaseModel):
     id: UUID
@@ -39,13 +46,16 @@ class CommunityOut(BaseModel):
     created_by: UUID
     created_at: datetime
     member_count: Optional[int] = 0
+
     class Config:
         from_attributes = True
+
 
 class PostCreate(BaseModel):
     title: str
     content: Optional[str] = None
     image_url: Optional[str] = None
+
 
 class PostOut(BaseModel):
     id: UUID
@@ -58,12 +68,16 @@ class PostOut(BaseModel):
     downvotes: int
     created_at: datetime
     author: Optional[UserOut] = None
+    user_vote: int = 0
+
     class Config:
         from_attributes = True
+
 
 class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[UUID] = None
+
 
 class CommentOut(BaseModel):
     id: UUID
@@ -75,15 +89,19 @@ class CommentOut(BaseModel):
     created_at: datetime
     author: Optional[UserOut] = None
     replies: list["CommentOut"] = []
+
     class Config:
         from_attributes = True
 
+
 CommentOut.model_rebuild()
+
 
 class VoteRequest(BaseModel):
     target_id: UUID
     target_type: str  # "post" or "comment"
-    value: int        # 1 or -1
+    value: int  # 1 or -1
+
 
 class MessageOut(BaseModel):
     id: UUID
@@ -92,5 +110,6 @@ class MessageOut(BaseModel):
     content: str
     is_read: bool
     sent_at: datetime
+
     class Config:
         from_attributes = True

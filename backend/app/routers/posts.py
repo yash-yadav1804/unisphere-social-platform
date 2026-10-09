@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import get_current_user
 from app.db.session import get_db
 from app.models.models import (
+    Comment,
     Community,
     CommunityMember,
     Post,
@@ -15,6 +16,50 @@ from app.models.models import (
 from app.schemas.schemas import PostCreate, PostOut, VoteRequest
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+
+
+async def attach_user_votes(
+    posts: list[Post],
+    user_id,
+    db: AsyncSession,
+) -> list[Post]:
+    """Attach each post's current user's vote for response serialization."""
+    if not posts:
+        return posts
+
+    post_ids = [post.id for post in posts]
+
+    result = await db.execute(
+        select(Vote.target_id, Vote.value).where(
+            Vote.user_id == user_id,
+            Vote.target_type == "post",
+            Vote.target_id.in_(post_ids),
+        )
+    )
+
+    votes_by_post = {target_id: value for target_id, value in result.all()}
+
+    for post in posts:
+        post.user_vote = votes_by_post.get(post.id, 0)
+
+    return posts
+
+
+async def update_post_vote_counts(
+    post: Post,
+    db: AsyncSession,
+) -> None:
+    """Recalculate the post's vote totals from vote records."""
+    result = await db.execute(
+        select(Vote.value).where(
+            Vote.target_id == post.id,
+            Vote.target_type == "post",
+        )
+    )
+    values = result.scalars().all()
+
+    post.upvotes = sum(1 for value in values if value == 1)
+    post.downvotes = sum(1 for value in values if value == -1)
 
 
 @router.post("/vote")
@@ -36,15 +81,11 @@ async def vote(
         )
 
     if data.target_type == "post":
-        target_result = await db.execute(select(Post).where(Post.id == data.target_id))
-        target = target_result.scalar_one_or_none()
+        result = await db.execute(select(Post).where(Post.id == data.target_id))
     else:
-        from app.models.models import Comment
+        result = await db.execute(select(Comment).where(Comment.id == data.target_id))
 
-        target_result = await db.execute(
-            select(Comment).where(Comment.id == data.target_id)
-        )
-        target = target_result.scalar_one_or_none()
+    target = result.scalar_one_or_none()
 
     if target is None:
         raise HTTPException(status_code=404, detail="Target not found")
@@ -62,9 +103,11 @@ async def vote(
         if existing.value == data.value:
             await db.delete(existing)
             action = "removed"
+            user_vote = 0
         else:
             existing.value = data.value
             action = "updated"
+            user_vote = data.value
     else:
         db.add(
             Vote(
@@ -75,20 +118,12 @@ async def vote(
             )
         )
         action = "created"
+        user_vote = data.value
 
     await db.flush()
 
     if data.target_type == "post":
-        votes_result = await db.execute(
-            select(Vote).where(
-                Vote.target_id == data.target_id,
-                Vote.target_type == "post",
-            )
-        )
-        votes = votes_result.scalars().all()
-
-        target.upvotes = sum(1 for item in votes if item.value == 1)
-        target.downvotes = sum(1 for item in votes if item.value == -1)
+        await update_post_vote_counts(target, db)
 
     await db.commit()
 
@@ -97,6 +132,9 @@ async def vote(
         "action": action,
         "target_id": str(data.target_id),
         "target_type": data.target_type,
+        "user_vote": user_vote,
+        "upvotes": target.upvotes if data.target_type == "post" else None,
+        "downvotes": target.downvotes if data.target_type == "post" else None,
     }
 
 
@@ -105,6 +143,7 @@ async def get_community_posts(
     community_id: str,
     sort: str = "new",
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     if sort not in {"new", "top"}:
         raise HTTPException(
@@ -130,7 +169,9 @@ async def get_community_posts(
         query = query.order_by(Post.created_at.desc())
 
     result = await db.execute(query)
-    return result.scalars().all()
+    posts = result.scalars().all()
+
+    return await attach_user_votes(posts, current_user.id, db)
 
 
 @router.get("/feed", response_model=list[PostOut])
@@ -167,13 +208,16 @@ async def home_feed(
         query = query.order_by(Post.created_at.desc())
 
     result = await db.execute(query)
-    return result.scalars().all()
+    posts = result.scalars().all()
+
+    return await attach_user_votes(posts, current_user.id, db)
 
 
 @router.get("/{post_id}", response_model=PostOut)
 async def get_post(
     post_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(Post).where(Post.id == post_id).options(selectinload(Post.author))
@@ -183,6 +227,7 @@ async def get_post(
     if post is None:
         raise HTTPException(status_code=404, detail="Post not found")
 
+    await attach_user_votes([post], current_user.id, db)
     return post
 
 
@@ -215,4 +260,7 @@ async def create_post(
     result = await db.execute(
         select(Post).where(Post.id == post.id).options(selectinload(Post.author))
     )
-    return result.scalar_one()
+    created_post = result.scalar_one()
+    created_post.user_vote = 0
+
+    return created_post
