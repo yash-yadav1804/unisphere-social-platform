@@ -15,20 +15,24 @@ export default function CommunityPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetch = async () => {
-      try {
-        const [cRes, pRes] = await Promise.all([
-          api.get(`/communities/${name}`),
-          api.get(`/posts/community/${name}?sort=${sort}`),
-        ])
-        setCommunity(cRes.data)
-        setPosts(pRes.data)
-      } catch {
-        setError('Failed to load community.')
-      }
+  const fetch = async () => {
+    try {
+      setError(null)
+
+      const cRes = await api.get(`/communities/${name}`)
+      setCommunity(cRes.data)
+
+      const pRes = await api.get(
+        `/posts/community/${cRes.data.id}?sort=${sort}`
+      )
+      setPosts(pRes.data)
+    } catch {
+      setError('Failed to load community.')
     }
-    fetch()
-  }, [name, sort])
+  }
+
+  fetch()
+}, [name, sort])
 
   const toggleJoin = async () => {
     if (!community) return
