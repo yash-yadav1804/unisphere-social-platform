@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import api from '../lib/api'
 import { Post, Comment } from '../types'
@@ -25,6 +25,9 @@ export default function PostPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [commentError, setCommentError] = useState('')
+
+  // Synchronously prevents rapid repeated submissions.
+  const submitLock = useRef(false)
 
   const fetchComments = useCallback(async () => {
     if (!id) return
@@ -65,23 +68,26 @@ export default function PostPage() {
   const submitComment = async () => {
     const content = newComment.trim()
 
-    if (!id || !content || submitting) return
+    if (!id || !content || submitLock.current) return
 
     if (content.length > 5000) {
       setCommentError('Comments must be 5,000 characters or fewer.')
       return
     }
 
+    submitLock.current = true
     setSubmitting(true)
     setCommentError('')
 
     try {
       await api.post(`/comments/${id}`, { content })
+
       setNewComment('')
       await fetchComments()
     } catch {
       setCommentError('Could not post your comment. Please try again.')
     } finally {
+      submitLock.current = false
       setSubmitting(false)
     }
   }
@@ -108,6 +114,7 @@ export default function PostPage() {
           <div className="h-4 w-full rounded bg-slate-100" />
           <div className="mt-2 h-4 w-2/3 rounded bg-slate-100" />
         </div>
+
         <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-6">
           <div className="h-4 w-40 rounded bg-slate-200" />
           <div className="mt-4 h-20 rounded bg-slate-100" />
@@ -122,6 +129,7 @@ export default function PostPage() {
         <p className="text-sm text-rose-600">
           {error || 'This post could not be found.'}
         </p>
+
         <button
           type="button"
           onClick={() => void fetchPost()}
@@ -143,7 +151,9 @@ export default function PostPage() {
             <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
               Discussion
             </span>
+
             <span aria-hidden="true">·</span>
+
             <span>
               Posted by{' '}
               {post.author?.username ? (
@@ -157,7 +167,9 @@ export default function PostPage() {
                 'Unknown user'
               )}
             </span>
+
             <span aria-hidden="true">·</span>
+
             <time dateTime={post.created_at}>
               {new Date(post.created_at).toLocaleDateString()}
             </time>
@@ -186,8 +198,10 @@ export default function PostPage() {
             <span className="font-semibold text-slate-700">
               {post.upvotes - post.downvotes} points
             </span>
+
             <span>
-              {totalComments} {totalComments === 1 ? 'comment' : 'comments'}
+              {totalComments}{' '}
+              {totalComments === 1 ? 'comment' : 'comments'}
             </span>
           </div>
         </div>
@@ -205,10 +219,12 @@ export default function PostPage() {
             >
               Discussion
             </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Share your thoughts and join the conversation.
             </p>
           </div>
+
           <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
             {totalComments}
           </span>
@@ -228,6 +244,7 @@ export default function PostPage() {
             >
               Add a comment
             </label>
+
             <textarea
               id="new-comment"
               value={newComment}
@@ -246,6 +263,7 @@ export default function PostPage() {
               <span className="text-xs text-slate-400">
                 {newComment.length}/5000 characters
               </span>
+
               <button
                 type="submit"
                 disabled={!newComment.trim() || submitting}
@@ -266,6 +284,7 @@ export default function PostPage() {
             <p className="text-sm text-slate-600">
               Log in to share your thoughts or reply to a comment.
             </p>
+
             <Link
               to="/login"
               className="mt-3 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
@@ -281,6 +300,7 @@ export default function PostPage() {
               <p className="font-semibold text-slate-700">
                 No comments yet
               </p>
+
               <p className="mt-1 text-sm text-slate-500">
                 Be the first to start the conversation.
               </p>

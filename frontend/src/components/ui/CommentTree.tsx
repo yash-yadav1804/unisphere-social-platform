@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Comment } from '../../types'
 import { useAuthStore } from '../../store/authStore'
@@ -26,13 +26,22 @@ export default function CommentTree({
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
 
+  // Prevents rapid repeated reply submissions before React re-renders.
+  const replyLock = useRef(false)
+
   const isOwner = user?.id === comment.author_id
 
   const submitReply = async () => {
     const content = replyText.trim()
 
-    if (!content || submitting) return
+    if (!content || replyLock.current) return
 
+    if (content.length > 5000) {
+      setError('Replies must be 5,000 characters or fewer.')
+      return
+    }
+
+    replyLock.current = true
     setSubmitting(true)
     setError('')
 
@@ -48,6 +57,7 @@ export default function CommentTree({
     } catch {
       setError('Could not post your reply. Please try again.')
     } finally {
+      replyLock.current = false
       setSubmitting(false)
     }
   }
@@ -64,7 +74,6 @@ export default function CommentTree({
 
     try {
       await api.delete(`/comments/${comment.id}`)
-      // Reload the comment tree through the parent callback.
       await onReplyAdded(comment, comment.id)
     } catch {
       setError('Could not delete this comment. Please try again.')
@@ -108,7 +117,9 @@ export default function CommentTree({
               <span aria-hidden="true">·</span>
 
               <time dateTime={comment.created_at}>
-                {validDate ? createdAt.toLocaleDateString() : 'Date unavailable'}
+                {validDate
+                  ? createdAt.toLocaleDateString()
+                  : 'Date unavailable'}
               </time>
             </div>
 
