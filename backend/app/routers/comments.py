@@ -14,8 +14,23 @@ from app.schemas.schemas import CommentCreate, CommentOut
 router = APIRouter(prefix="/comments", tags=["comments"])
 
 
+def serialize_comment_response(comment: Comment) -> dict:
+    """Serialize a comment without triggering async lazy-loading."""
+    return {
+        "id": comment.id,
+        "post_id": comment.post_id,
+        "author_id": comment.author_id,
+        "parent_id": comment.parent_id,
+        "content": comment.content,
+        "upvotes": comment.upvotes,
+        "created_at": comment.created_at,
+        "author": comment.author,
+        "replies": [],
+    }
+
+
 def build_tree(comments: list[Comment]) -> list[dict]:
-    """Serialize comments into a nested tree without exposing ORM internals."""
+    """Serialize comments into a nested tree."""
     children: dict[UUID | None, list[Comment]] = {}
 
     for comment in comments:
@@ -93,9 +108,7 @@ async def create_comment(
         )
         return result.scalar_one_or_none()
 
-    existing = await find_existing_comment()
-
-    if existing is not None:
+    def validate_existing_comment(existing: Comment) -> None:
         if (
             existing.post_id != post_id
             or existing.parent_id != data.parent_id
@@ -106,7 +119,12 @@ async def create_comment(
                 detail="Idempotency key was already used for another comment.",
             )
 
-        return existing
+    # Return the existing comment when this request was already processed.
+    existing = await find_existing_comment()
+
+    if existing is not None:
+        validate_existing_comment(existing)
+        return serialize_comment_response(existing)
 
     comment = Comment(
         post_id=post_id,
@@ -123,29 +141,24 @@ async def create_comment(
     except IntegrityError:
         await db.rollback()
 
+        # A concurrent request may have inserted the same idempotency key.
         existing = await find_existing_comment()
 
         if existing is None:
             raise
 
-        if (
-            existing.post_id != post_id
-            or existing.parent_id != data.parent_id
-            or existing.content != content
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Idempotency key was already used for another comment.",
-            )
+        validate_existing_comment(existing)
+        return serialize_comment_response(existing)
 
-        return existing
-
+    # Reload the author explicitly; do not return a lazy ORM relationship.
     result = await db.execute(
         select(Comment)
         .where(Comment.id == comment.id)
         .options(selectinload(Comment.author))
     )
-    return result.scalar_one()
+    created_comment = result.scalar_one()
+
+    return serialize_comment_response(created_comment)
 
 
 @router.get("/{post_id}", response_model=list[CommentOut])
@@ -195,7 +208,7 @@ async def delete_comment(
             detail="You can only delete your own comments.",
         )
 
-    # Delete nested replies before deleting the parent comment.
+    # Delete nested replies from deepest level upward.
     replies_result = await db.execute(
         select(Comment).where(Comment.parent_id == comment.id)
     )
