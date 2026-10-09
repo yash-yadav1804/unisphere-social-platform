@@ -77,6 +77,7 @@ class PostOut(BaseModel):
 class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[UUID] = None
+    idempotency_key: UUID
 
 
 class CommentOut(BaseModel):

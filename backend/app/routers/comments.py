@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,8 +22,6 @@ def build_tree(comments: list[Comment]) -> list[dict]:
         children.setdefault(comment.parent_id, []).append(comment)
 
     def serialize(comment: Comment) -> dict:
-        author = comment.author
-
         return {
             "id": comment.id,
             "post_id": comment.post_id,
@@ -31,7 +30,7 @@ def build_tree(comments: list[Comment]) -> list[dict]:
             "content": comment.content,
             "upvotes": comment.upvotes,
             "created_at": comment.created_at,
-            "author": author,
+            "author": comment.author,
             "replies": [serialize(reply) for reply in children.get(comment.id, [])],
         }
 
@@ -72,7 +71,7 @@ async def create_comment(
 
     if data.parent_id is not None:
         parent_result = await db.execute(
-            select(Comment).where(
+            select(Comment.id).where(
                 Comment.id == data.parent_id,
                 Comment.post_id == post_id,
             )
@@ -83,34 +82,70 @@ async def create_comment(
                 detail="Parent comment does not belong to this post.",
             )
 
+    async def find_existing_comment():
+        result = await db.execute(
+            select(Comment)
+            .where(
+                Comment.author_id == current_user.id,
+                Comment.idempotency_key == data.idempotency_key,
+            )
+            .options(selectinload(Comment.author))
+        )
+        return result.scalar_one_or_none()
+
+    existing = await find_existing_comment()
+
+    if existing is not None:
+        if (
+            existing.post_id != post_id
+            or existing.parent_id != data.parent_id
+            or existing.content != content
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Idempotency key was already used for another comment.",
+            )
+
+        return existing
+
     comment = Comment(
         post_id=post_id,
         author_id=current_user.id,
         content=content,
         parent_id=data.parent_id,
+        idempotency_key=data.idempotency_key,
     )
 
     db.add(comment)
-    await db.commit()
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+
+        existing = await find_existing_comment()
+
+        if existing is None:
+            raise
+
+        if (
+            existing.post_id != post_id
+            or existing.parent_id != data.parent_id
+            or existing.content != content
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Idempotency key was already used for another comment.",
+            )
+
+        return existing
 
     result = await db.execute(
         select(Comment)
         .where(Comment.id == comment.id)
         .options(selectinload(Comment.author))
     )
-    created_comment = result.scalar_one()
-
-    return {
-        "id": created_comment.id,
-        "post_id": created_comment.post_id,
-        "author_id": created_comment.author_id,
-        "parent_id": created_comment.parent_id,
-        "content": created_comment.content,
-        "upvotes": created_comment.upvotes,
-        "created_at": created_comment.created_at,
-        "author": created_comment.author,
-        "replies": [],
-    }
+    return result.scalar_one()
 
 
 @router.get("/{post_id}", response_model=list[CommentOut])
@@ -136,7 +171,10 @@ async def get_comments(
     return build_tree(comments)
 
 
-@router.delete("/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_comment(
     comment_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -157,7 +195,7 @@ async def delete_comment(
             detail="You can only delete your own comments.",
         )
 
-    # Delete replies first so foreign-key references remain valid.
+    # Delete nested replies before deleting the parent comment.
     replies_result = await db.execute(
         select(Comment).where(Comment.parent_id == comment.id)
     )
@@ -165,6 +203,7 @@ async def delete_comment(
 
     while replies:
         next_level = []
+
         for reply in replies:
             children_result = await db.execute(
                 select(Comment).where(Comment.parent_id == reply.id)
@@ -178,4 +217,5 @@ async def delete_comment(
 
     await db.delete(comment)
     await db.commit()
+
     return None

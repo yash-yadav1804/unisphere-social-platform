@@ -26,8 +26,14 @@ export default function CommentTree({
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
 
-  // Prevents rapid repeated reply submissions before React re-renders.
+  // Prevent rapid duplicate submissions before React re-renders.
   const replyLock = useRef(false)
+
+  // Reuse the same key when retrying the same reply.
+  const pendingReplyRequest = useRef<{
+    content: string
+    key: string
+  } | null>(null)
 
   const isOwner = user?.id === comment.author_id
 
@@ -45,17 +51,30 @@ export default function CommentTree({
     setSubmitting(true)
     setError('')
 
+    let request = pendingReplyRequest.current
+
+    if (!request || request.content !== content) {
+      request = {
+        content,
+        key: crypto.randomUUID(),
+      }
+      pendingReplyRequest.current = request
+    }
+
     try {
       const response = await api.post<Comment>(`/comments/${postId}`, {
         content,
         parent_id: comment.id,
+        idempotency_key: request.key,
       })
 
+      pendingReplyRequest.current = null
       setReplyText('')
       setReplying(false)
+
       await onReplyAdded(response.data, comment.id)
     } catch {
-      setError('Could not post your reply. Please try again.')
+      setError('Could not confirm your reply. Please try again.')
     } finally {
       replyLock.current = false
       setSubmitting(false)

@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+
 import api from '../lib/api'
 import { Post, Comment } from '../types'
 import CommentTree from '../components/ui/CommentTree'
@@ -26,8 +27,13 @@ export default function PostPage() {
   const [error, setError] = useState('')
   const [commentError, setCommentError] = useState('')
 
-  // Synchronously prevents rapid repeated submissions.
   const submitLock = useRef(false)
+
+  // Retain the same key when retrying an unchanged comment.
+  const pendingCommentRequest = useRef<{
+    content: string
+    key: string
+  } | null>(null)
 
   const fetchComments = useCallback(async () => {
     if (!id) return
@@ -79,13 +85,30 @@ export default function PostPage() {
     setSubmitting(true)
     setCommentError('')
 
-    try {
-      await api.post(`/comments/${id}`, { content })
+    // Reuse the key if the same comment is retried after a failure.
+    let request = pendingCommentRequest.current
 
+    if (!request || request.content !== content) {
+      request = {
+        content,
+        key: crypto.randomUUID(),
+      }
+      pendingCommentRequest.current = request
+    }
+
+    try {
+      await api.post(`/comments/${id}`, {
+        content,
+        idempotency_key: request.key,
+      })
+
+      pendingCommentRequest.current = null
       setNewComment('')
       await fetchComments()
     } catch {
-      setCommentError('Could not post your comment. Please try again.')
+      setCommentError(
+        'Could not confirm your comment. Please try again.'
+      )
     } finally {
       submitLock.current = false
       setSubmitting(false)

@@ -1,8 +1,19 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Text, Boolean, Integer, ForeignKey, DateTime, Enum, Uuid
+from sqlalchemy import (
+    String,
+    Text,
+    Boolean,
+    Integer,
+    ForeignKey,
+    DateTime,
+    Enum,
+    Uuid,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -17,9 +28,15 @@ class User(Base):
 
     posts: Mapped[list["Post"]] = relationship("Post", back_populates="author")
     comments: Mapped[list["Comment"]] = relationship("Comment", back_populates="author")
-    memberships: Mapped[list["CommunityMember"]] = relationship("CommunityMember", back_populates="user")
-    sent_messages: Mapped[list["Message"]] = relationship("Message", foreign_keys="Message.sender_id", back_populates="sender")
-    received_messages: Mapped[list["Message"]] = relationship("Message", foreign_keys="Message.receiver_id", back_populates="receiver")
+    memberships: Mapped[list["CommunityMember"]] = relationship(
+        "CommunityMember", back_populates="user"
+    )
+    sent_messages: Mapped[list["Message"]] = relationship(
+        "Message", foreign_keys="Message.sender_id", back_populates="sender"
+    )
+    received_messages: Mapped[list["Message"]] = relationship(
+        "Message", foreign_keys="Message.receiver_id", back_populates="receiver"
+    )
 
 
 class Community(Base):
@@ -33,14 +50,18 @@ class Community(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     posts: Mapped[list["Post"]] = relationship("Post", back_populates="community")
-    members: Mapped[list["CommunityMember"]] = relationship("CommunityMember", back_populates="community")
+    members: Mapped[list["CommunityMember"]] = relationship(
+        "CommunityMember", back_populates="community"
+    )
 
 
 class CommunityMember(Base):
     __tablename__ = "community_members"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
-    community_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("communities.id"))
+    community_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("communities.id")
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("users.id"))
     role: Mapped[str] = mapped_column(String(20), default="member")
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -53,7 +74,9 @@ class Post(Base):
     __tablename__ = "posts"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
-    community_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("communities.id"))
+    community_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("communities.id")
+    )
     author_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("users.id"))
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
@@ -69,19 +92,35 @@ class Post(Base):
 
 class Comment(Base):
     __tablename__ = "comments"
+    __table_args__ = (
+        UniqueConstraint(
+            "author_id",
+            "idempotency_key",
+            name="uq_comments_author_idempotency_key",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
-    post_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("posts.id"))
-    author_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("users.id"))
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(), ForeignKey("comments.id"), nullable=True)
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("posts.id"), nullable=False
+    )
+    author_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("users.id"), nullable=False
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("comments.id"), nullable=True
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     upvotes: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    idempotency_key: Mapped[uuid.UUID | None] = mapped_column(Uuid(), nullable=True)
 
     post: Mapped["Post"] = relationship("Post", back_populates="comments")
     author: Mapped["User"] = relationship("User", back_populates="comments")
     replies: Mapped[list["Comment"]] = relationship("Comment", back_populates="parent")
-    parent: Mapped["Comment | None"] = relationship("Comment", back_populates="replies", remote_side="Comment.id")
+    parent: Mapped["Comment | None"] = relationship(
+        "Comment", back_populates="replies", remote_side="Comment.id"
+    )
 
 
 class Vote(Base):
@@ -105,5 +144,9 @@ class Message(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id], back_populates="sent_messages")
-    receiver: Mapped["User"] = relationship("User", foreign_keys=[receiver_id], back_populates="received_messages")
+    sender: Mapped["User"] = relationship(
+        "User", foreign_keys=[sender_id], back_populates="sent_messages"
+    )
+    receiver: Mapped["User"] = relationship(
+        "User", foreign_keys=[receiver_id], back_populates="received_messages"
+    )
