@@ -1,120 +1,218 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.db.session import get_db
-from app.models.models import Post, Community, Vote, User
-from app.schemas.schemas import PostCreate, PostOut, VoteRequest
+
 from app.core.deps import get_current_user
+from app.db.session import get_db
+from app.models.models import (
+    Community,
+    CommunityMember,
+    Post,
+    User,
+    Vote,
+)
+from app.schemas.schemas import PostCreate, PostOut, VoteRequest
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+
+
+@router.post("/vote")
+async def vote(
+    data: VoteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if data.target_type not in {"post", "comment"}:
+        raise HTTPException(
+            status_code=422,
+            detail="target_type must be 'post' or 'comment'",
+        )
+
+    if data.value not in {-1, 1}:
+        raise HTTPException(
+            status_code=422,
+            detail="value must be 1 or -1",
+        )
+
+    if data.target_type == "post":
+        target_result = await db.execute(select(Post).where(Post.id == data.target_id))
+        target = target_result.scalar_one_or_none()
+    else:
+        from app.models.models import Comment
+
+        target_result = await db.execute(
+            select(Comment).where(Comment.id == data.target_id)
+        )
+        target = target_result.scalar_one_or_none()
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target not found")
+
+    existing_result = await db.execute(
+        select(Vote).where(
+            Vote.user_id == current_user.id,
+            Vote.target_id == data.target_id,
+            Vote.target_type == data.target_type,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+
+    if existing:
+        if existing.value == data.value:
+            await db.delete(existing)
+            action = "removed"
+        else:
+            existing.value = data.value
+            action = "updated"
+    else:
+        db.add(
+            Vote(
+                user_id=current_user.id,
+                target_id=data.target_id,
+                target_type=data.target_type,
+                value=data.value,
+            )
+        )
+        action = "created"
+
+    await db.flush()
+
+    if data.target_type == "post":
+        votes_result = await db.execute(
+            select(Vote).where(
+                Vote.target_id == data.target_id,
+                Vote.target_type == "post",
+            )
+        )
+        votes = votes_result.scalars().all()
+
+        target.upvotes = sum(1 for item in votes if item.value == 1)
+        target.downvotes = sum(1 for item in votes if item.value == -1)
+
+    await db.commit()
+
+    return {
+        "message": "Vote recorded",
+        "action": action,
+        "target_id": str(data.target_id),
+        "target_type": data.target_type,
+    }
+
+
+@router.get("/community/{community_id}", response_model=list[PostOut])
+async def get_community_posts(
+    community_id: str,
+    sort: str = "new",
+    db: AsyncSession = Depends(get_db),
+):
+    if sort not in {"new", "top"}:
+        raise HTTPException(
+            status_code=422,
+            detail="sort must be 'new' or 'top'",
+        )
+
+    community_result = await db.execute(
+        select(Community).where(Community.id == community_id)
+    )
+    if community_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Community not found")
+
+    query = (
+        select(Post)
+        .where(Post.community_id == community_id)
+        .options(selectinload(Post.author))
+    )
+
+    if sort == "top":
+        query = query.order_by(Post.upvotes.desc(), Post.created_at.desc())
+    else:
+        query = query.order_by(Post.created_at.desc())
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/feed", response_model=list[PostOut])
+async def home_feed(
+    sort: str = "new",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if sort not in {"new", "top"}:
+        raise HTTPException(
+            status_code=422,
+            detail="sort must be 'new' or 'top'",
+        )
+
+    memberships_result = await db.execute(
+        select(CommunityMember.community_id).where(
+            CommunityMember.user_id == current_user.id
+        )
+    )
+    community_ids = memberships_result.scalars().all()
+
+    if not community_ids:
+        return []
+
+    query = (
+        select(Post)
+        .where(Post.community_id.in_(community_ids))
+        .options(selectinload(Post.author))
+    )
+
+    if sort == "top":
+        query = query.order_by(Post.upvotes.desc(), Post.created_at.desc())
+    else:
+        query = query.order_by(Post.created_at.desc())
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/{post_id}", response_model=PostOut)
+async def get_post(
+    post_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Post).where(Post.id == post_id).options(selectinload(Post.author))
+    )
+    post = result.scalar_one_or_none()
+
+    if post is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    return post
+
 
 @router.post("/{community_id}", response_model=PostOut)
 async def create_post(
     community_id: str,
     data: PostCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Community).where(Community.id == community_id))
-    if not result.scalar_one_or_none():
+    community_result = await db.execute(
+        select(Community).where(Community.id == community_id)
+    )
+    community = community_result.scalar_one_or_none()
+
+    if community is None:
         raise HTTPException(status_code=404, detail="Community not found")
 
     post = Post(
-        community_id=community_id,
+        community_id=community.id,
         author_id=current_user.id,
         title=data.title,
         content=data.content,
-        image_url=data.image_url
+        image_url=data.image_url,
     )
+
     db.add(post)
     await db.commit()
-    await db.refresh(post)
-    return post
 
-@router.get("/community/{community_id}", response_model=list[PostOut])
-async def get_community_posts(
-    community_id: str,
-    sort: str = "new",
-    db: AsyncSession = Depends(get_db)
-):
-    query = select(Post).where(Post.community_id == community_id).options(selectinload(Post.author))
-    if sort == "top":
-        query = query.order_by(Post.upvotes.desc())
-    else:
-        query = query.order_by(Post.created_at.desc())
-    result = await db.execute(query)
-    return result.scalars().all()
-
-@router.get("/feed", response_model=list[PostOut])
-async def home_feed(
-    sort: str = "new",
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    from app.models.models import CommunityMember
-    memberships = await db.execute(
-        select(CommunityMember.community_id).where(CommunityMember.user_id == current_user.id)
-    )
-    community_ids = [r[0] for r in memberships.all()]
-
-    query = select(Post).where(Post.community_id.in_(community_ids)).options(selectinload(Post.author))
-    if sort == "top":
-        query = query.order_by(Post.upvotes.desc())
-    else:
-        query = query.order_by(Post.created_at.desc())
-    result = await db.execute(query)
-    return result.scalars().all()
-
-@router.get("/{post_id}", response_model=PostOut)
-async def get_post(post_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Post).where(Post.id == post_id).options(selectinload(Post.author))
+        select(Post).where(Post.id == post.id).options(selectinload(Post.author))
     )
-    post = result.scalar_one_or_none()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return post
-
-@router.post("/vote")
-async def vote(
-    data: VoteRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    result = await db.execute(
-        select(Vote).where(
-            Vote.user_id == current_user.id,
-            Vote.target_id == data.target_id,
-            Vote.target_type == data.target_type
-        )
-    )
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        if existing.value == data.value:
-            await db.delete(existing)
-        else:
-            existing.value = data.value
-    else:
-        vote = Vote(
-            user_id=current_user.id,
-            target_id=data.target_id,
-            target_type=data.target_type,
-            value=data.value
-        )
-        db.add(vote)
-
-    if data.target_type == "post":
-        post_result = await db.execute(select(Post).where(Post.id == data.target_id))
-        post = post_result.scalar_one_or_none()
-        if post:
-            votes_result = await db.execute(
-                select(Vote).where(Vote.target_id == data.target_id, Vote.target_type == "post")
-            )
-            all_votes = votes_result.scalars().all()
-            post.upvotes = sum(1 for v in all_votes if v.value == 1)
-            post.downvotes = sum(1 for v in all_votes if v.value == -1)
-
-    await db.commit()
-    return {"message": "Vote recorded"}
+    return result.scalar_one()
