@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/posts", tags=["posts"])
 
 async def attach_user_votes(
     posts: list[Post],
-    user_id,
+    user_id: UUID,
     db: AsyncSession,
 ) -> list[Post]:
     """Attach each post's current user's vote for response serialization."""
@@ -140,7 +142,7 @@ async def vote(
 
 @router.get("/community/{community_id}", response_model=list[PostOut])
 async def get_community_posts(
-    community_id: str,
+    community_id: UUID,
     sort: str = "new",
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -154,6 +156,7 @@ async def get_community_posts(
     community_result = await db.execute(
         select(Community).where(Community.id == community_id)
     )
+
     if community_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Community not found")
 
@@ -215,7 +218,7 @@ async def home_feed(
 
 @router.get("/{post_id}", response_model=PostOut)
 async def get_post(
-    post_id: str,
+    post_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -233,7 +236,7 @@ async def get_post(
 
 @router.post("/{community_id}", response_model=PostOut)
 async def create_post(
-    community_id: str,
+    community_id: UUID,
     data: PostCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
