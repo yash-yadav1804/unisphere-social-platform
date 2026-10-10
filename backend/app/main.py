@@ -6,7 +6,11 @@ app = FastAPI(title="Unisphere API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://unisphere.pages.dev"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://unisphere.pages.dev",
+        "https://unisphere-zeta-five.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
