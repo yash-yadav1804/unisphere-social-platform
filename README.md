@@ -13,7 +13,8 @@ Unisphere is a social community web application where users can create posts, jo
 
 > **Live application:** https://unisphere-zeta-five.vercel.app/login  
 > **Repository:** https://github.com/yash-yadav1804/unisphere-social-platform  
-> **Backend API:** Not yet added — see [Finding the backend URL](#finding-the-backend-url).
+> **Backend API:** http://35.154.17.237 (HTTP endpoint; verify public access before relying on it).
+> **API Documentation:** http://35.154.17.237/docs (expected Swagger UI URL; verify in a browser).
 
 ## Table of Contents
 
@@ -223,15 +224,15 @@ When running locally, FastAPI's interactive documentation is normally available 
 
 ### Finding the backend URL
 
-The AWS EC2 console screenshot shows this instance public IPv4 address:
+The EC2 instance public IPv4 address is `35.154.17.237`. The Nginx configuration reports `server_name 35.154.17.237` and proxies requests to `http://127.0.0.1:8000`. The `nginx` and `unisphere-backend` systemd services were reported as running when checked.
 
-```text
-35.154.17.237
-```
+- Backend base URL (HTTP): [http://35.154.17.237](http://35.154.17.237)
+- Swagger UI (expected): [http://35.154.17.237/docs](http://35.154.17.237/docs)
+- OpenAPI schema (expected): [http://35.154.17.237/openapi.json](http://35.154.17.237/openapi.json)
 
-This is the EC2 server address, **not confirmation that the public API is reachable at that IP**. The actual API URL depends on the Nginx configuration, TLS certificate, security-group rules, and application routing.
+These public URLs still need to be opened and verified from a browser. They require the relevant EC2 security-group ports to be open and the matching Nginx routes to be active. The supplied configuration output does not confirm HTTPS/TLS, so do not use an `https://` URL unless a valid certificate and HTTPS listener are verified.
 
-On the EC2 instance, inspect Nginx configuration:
+To inspect Nginx configuration on the EC2 instance:
 
 ```bash
 sudo nginx -T 2>/dev/null | grep -E 'server_name|proxy_pass'
@@ -263,8 +264,9 @@ The FastAPI backend is hosted on AWS EC2. The deployment notes for this project 
 - PostgreSQL storing application data.
 - Alembic managing database schema migrations.
 
-**Backend API URL:** Add the verified public API URL here.  
-**Swagger UI:** Add the verified URL ending in `/docs` here.
+**Backend API URL (HTTP; verify public access):** [http://35.154.17.237](http://35.154.17.237)  
+**Swagger UI (expected; verify):** [http://35.154.17.237/docs](http://35.154.17.237/docs)  
+**OpenAPI schema (expected; verify):** [http://35.154.17.237/openapi.json](http://35.154.17.237/openapi.json)
 
 ### Deployment checklist
 
