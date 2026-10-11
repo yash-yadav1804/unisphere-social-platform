@@ -1,5 +1,5 @@
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Comment } from '../../types'
 import { useAuthStore } from '../../store/authStore'
@@ -10,6 +10,7 @@ interface Props {
   postId: string
   depth?: number
   onReplyAdded: (reply: Comment, parentId: string) => void | Promise<void>
+  canModerate?: boolean
 }
 
 export default function CommentTree({
@@ -17,6 +18,7 @@ export default function CommentTree({
   postId,
   depth = 0,
   onReplyAdded,
+  canModerate = false,
 }: Props) {
   const user = useAuthStore((state) => state.user)
 
@@ -24,6 +26,12 @@ export default function CommentTree({
   const [replyText, setReplyText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editText, setEditText] = useState(comment.content)
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [voting, setVoting] = useState(false)
+  const [commentVotes, setCommentVotes] = useState(comment.upvotes)
+  const [userVote, setUserVote] = useState(comment.user_vote ?? 0)
   const [error, setError] = useState('')
 
   // Prevent rapid duplicate submissions before React re-renders.
@@ -36,6 +44,25 @@ export default function CommentTree({
   } | null>(null)
 
   const isOwner = user?.id === comment.author_id
+  const canDelete = isOwner || canModerate
+
+  useEffect(() => {
+    setCommentVotes(comment.upvotes)
+    setUserVote(comment.user_vote ?? 0)
+  }, [comment.id, comment.upvotes, comment.user_vote])
+
+  const voteComment = async () => {
+    if (!user) { setError('Please log in to vote.'); return }
+    if (voting) return
+    setVoting(true)
+    setError('')
+    try {
+      const response = await api.post('/posts/vote', { target_id: comment.id, target_type: 'comment', value: 1 })
+      setCommentVotes(response.data.upvotes ?? commentVotes)
+      setUserVote(response.data.user_vote)
+    } catch { setError('Could not update comment vote. Please try again.') }
+    finally { setVoting(false) }
+  }
 
   const submitReply = async () => {
     const content = replyText.trim()
@@ -81,6 +108,19 @@ export default function CommentTree({
     }
   }
 
+  const saveEdit = async () => {
+    const content = editText.trim()
+    if (!content || content.length > 5000 || savingEdit) return
+    setSavingEdit(true)
+    setError('')
+    try {
+      await api.patch(`/comments/${comment.id}`, { content })
+      await onReplyAdded(comment, comment.id)
+      setEditing(false)
+    } catch { setError('Could not save comment changes. Please try again.') }
+    finally { setSavingEdit(false) }
+  }
+
   const deleteComment = async () => {
     const confirmed = window.confirm(
       'Delete this comment and all its replies? This action cannot be undone.'
@@ -111,12 +151,7 @@ export default function CommentTree({
         }`}
       >
         <div className="flex min-w-0 items-start gap-3">
-          <div
-            aria-hidden="true"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-bold text-blue-700"
-          >
-            {(comment.author?.username ?? 'U').charAt(0).toUpperCase()}
-          </div>
+          <Link to={comment.author?.username ? `/u/${encodeURIComponent(comment.author.username)}` : '#'} aria-label={`${comment.author?.username ?? 'User'} profile`} className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-sm font-bold text-blue-700">{comment.author?.avatar_url ? <img src={comment.author.avatar_url} alt="" className="h-full w-full object-cover"/> : (comment.author?.username ?? 'U').charAt(0).toUpperCase()}</Link>
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
@@ -142,11 +177,17 @@ export default function CommentTree({
               </time>
             </div>
 
-            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
-              {comment.content}
-            </p>
+            {editing ? (
+              <div className="mt-2 space-y-2">
+                <textarea value={editText} onChange={(event) => setEditText(event.target.value)} maxLength={5000} rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" aria-label="Edit comment" />
+                <div className="flex gap-2"><button type="button" disabled={!editText.trim() || savingEdit} onClick={() => void saveEdit()} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{savingEdit ? 'Saving…' : 'Save'}</button><button type="button" onClick={() => { setEditing(false); setEditText(comment.content) }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold">Cancel</button></div>
+              </div>
+            ) : (
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{comment.content}</p>
+            )}
 
             <div className="mt-3 flex flex-wrap items-center gap-4">
+              <button type="button" onClick={() => void voteComment()} disabled={voting} aria-pressed={userVote === 1} className={`text-xs font-semibold disabled:opacity-50 ${userVote === 1 ? 'text-blue-700' : 'text-slate-500 hover:text-blue-700'}`}>▲ {commentVotes}</button>
               {user && (
                 <button
                   type="button"
@@ -161,7 +202,11 @@ export default function CommentTree({
                 </button>
               )}
 
-              {isOwner && (
+              {isOwner && !editing && (
+                <button type="button" onClick={() => { setEditText(comment.content); setEditing(true) }} className="text-xs font-semibold text-slate-500 transition hover:text-blue-700">Edit</button>
+              )}
+
+              {canDelete && !editing && (
                 <button
                   type="button"
                   onClick={() => void deleteComment()}
@@ -232,6 +277,7 @@ export default function CommentTree({
               postId={postId}
               depth={depth + 1}
               onReplyAdded={onReplyAdded}
+              canModerate={canModerate}
             />
           ))}
         </div>

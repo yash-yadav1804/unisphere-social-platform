@@ -7,6 +7,11 @@ export interface User {
   created_at: string
 }
 
+export interface UserProfile extends Omit<User, 'email'> {
+  followers_count: number
+  following_count: number
+}
+
 export interface Community {
   id: string
   name: string
@@ -28,6 +33,10 @@ export interface Post {
   downvotes: number
   created_at: string
   author?: User
+  user_vote?: number
+  is_saved?: boolean
+  likes_count?: number
+  liked_by_me?: boolean
 }
 
 export interface Comment {
@@ -39,6 +48,7 @@ export interface Comment {
   upvotes: number
   created_at: string
   author?: User
+  user_vote?: number
   replies: Comment[]
 }
 
@@ -49,6 +59,15 @@ export interface Message {
   content: string
   is_read: boolean
   sent_at: string
+}
+
+export interface NotificationItem {
+  id: string
+  message: string
+  actor_username: string | null
+  post_id: string | null
+  is_read: boolean
+  created_at: string
 }
 
 export interface TokenResponse {

@@ -12,6 +12,9 @@ import CreateCommunityPage from './pages/CreateCommunityPage'
 import ProfilePage from './pages/ProfilePage'
 import MessagesPage from './pages/MessagesPage'
 import SearchPage from './pages/SearchPage'
+import SavedPostsPage from './pages/SavedPostsPage'
+import NotificationsPage from './pages/NotificationsPage'
+import CommunitiesPage from './pages/CommunitiesPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user)
@@ -34,12 +37,15 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
           <Route path="c/:name" element={<CommunityPage />} />
+          <Route path="communities" element={<CommunitiesPage />} />
           <Route path="post/:id" element={<PostPage />} />
           <Route path="submit/:communityId" element={<ProtectedRoute><CreatePostPage /></ProtectedRoute>} />
           <Route path="create-community" element={<ProtectedRoute><CreateCommunityPage /></ProtectedRoute>} />
           <Route path="u/:username" element={<ProfilePage />} />
           <Route path="messages" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
           <Route path="messages/:userId" element={<ProtectedRoute><MessagesPage /></ProtectedRoute>} />
+          <Route path="saved" element={<ProtectedRoute><SavedPostsPage /></ProtectedRoute>} />
+          <Route path="notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
           <Route path="search" element={<SearchPage />} />
         </Route>
       </Routes>

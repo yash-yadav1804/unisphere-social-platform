@@ -8,7 +8,7 @@ A full-stack social media platform built as my final year project that has commu
 
 **Frontend:** React 18, TypeScript, Tailwind CSS, Zustand, React Router v6, Axios
 
-**Deployment:** Render (backend + DB) · Cloudflare Pages (frontend)
+**Deployment:** Existing AWS EC2 backend + existing Vercel frontend. This project does not provision or switch deployment infrastructure.
 
 ## Features
 
@@ -19,6 +19,24 @@ A full-stack social media platform built as my final year project that has commu
 - Real-time direct messaging via WebSockets
 - User profiles with post and comment history
 - Search posts and communities
+- Follow / unfollow users with follower counts
+- Save / unsave posts and browse a personal saved-posts page
+- Notifications for new followers, comments and replies, including unread counts and read status
+- Edit and delete your own posts and comments with server-side authorization
+- Community admin tools for promoting members to moderators; moderators can manage posts and comments
+- Community member counts and persisted join / leave status
+- New and top feed sorting; nested threaded comments
+
+## Existing production deployment
+
+The deployed environment is intentionally unchanged:
+
+- Frontend: `https://unisphere-zeta-five.vercel.app` (Vercel)
+- Backend/API: `https://35.154.17.237` (existing EC2 instance)
+- API docs: `https://35.154.17.237/docs`
+- WebSocket base URL: `wss://35.154.17.237`
+
+Keep these existing Vercel environment variables when deploying: `VITE_API_URL=https://35.154.17.237` and `VITE_WS_URL=wss://35.154.17.237`. Do not create a new deployment or database for these changes. Apply Alembic migrations on the existing backend before restarting its existing systemd service.
 
 ## Getting Started
 
@@ -83,6 +101,7 @@ unisphere/
 │   │   └── main.py
 │   ├── alembic/
 │   ├── requirements.txt
+│   ├── tests/               # API and behavior tests
 │   └── .env.example
 ├── frontend/
 │   ├── src/

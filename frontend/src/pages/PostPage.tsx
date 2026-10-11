@@ -26,6 +26,12 @@ export default function PostPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [commentError, setCommentError] = useState('')
+  const [editingPost, setEditingPost] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editContent, setEditContent] = useState('')
+  const [postActionError, setPostActionError] = useState('')
+  const [postActionLoading, setPostActionLoading] = useState(false)
+  const [canModerate, setCanModerate] = useState(false)
 
   const submitLock = useRef(false)
 
@@ -59,13 +65,22 @@ export default function PostPage() {
       ])
 
       setPost(postResponse.data)
+      setEditTitle(postResponse.data.title)
+      setEditContent(postResponse.data.content ?? '')
       setComments(commentsResponse.data)
+      setCanModerate(false)
+      if (user) {
+        try {
+          const membership = await api.get(`/communities/${postResponse.data.community_id}/membership`)
+          setCanModerate(['admin', 'moderator'].includes(membership.data.role))
+        } catch { setCanModerate(false) }
+      }
     } catch {
       setError('Unable to load this discussion. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, user?.id])
 
   useEffect(() => {
     void fetchPost()
@@ -126,6 +141,33 @@ export default function PostPage() {
         'Your reply may have been saved, but the comments could not refresh.'
       )
     }
+  }
+
+  const savePostEdits = async () => {
+    if (!post || !editTitle.trim() || postActionLoading) return
+    setPostActionLoading(true)
+    setPostActionError('')
+    try {
+      const response = await api.patch<Post>(`/posts/${post.id}`, {
+        title: editTitle.trim(),
+        content: editContent.trim() || null,
+        image_url: post.image_url,
+      })
+      setPost(response.data)
+      setEditingPost(false)
+    } catch { setPostActionError('Could not save changes. Only the author or a community moderator can edit this post.') }
+    finally { setPostActionLoading(false) }
+  }
+
+  const deletePost = async () => {
+    if (!post || postActionLoading || !window.confirm('Delete this post and its comments? This cannot be undone.')) return
+    setPostActionLoading(true)
+    setPostActionError('')
+    try {
+      await api.delete(`/posts/${post.id}`)
+      window.location.assign('/')
+    } catch { setPostActionError('Could not delete this post. Only the author or a community moderator can delete it.') }
+    finally { setPostActionLoading(false) }
   }
 
   if (loading) {
@@ -207,6 +249,21 @@ export default function PostPage() {
               {post.content}
             </p>
           )}
+
+          {user && (user.id === post.author_id || canModerate) && !editingPost && (
+            <div className="mt-4 flex gap-2">
+              <button type="button" onClick={() => { setEditTitle(post.title); setEditContent(post.content ?? ''); setEditingPost(true) }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit post</button>
+              <button type="button" disabled={postActionLoading} onClick={() => void deletePost()} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Delete post</button>
+            </div>
+          )}
+          {editingPost && (
+            <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <label className="block text-sm font-semibold text-slate-700">Title<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={300} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /></label>
+              <label className="block text-sm font-semibold text-slate-700">Body<textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={4} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" /></label>
+              <div className="flex gap-2"><button type="button" disabled={!editTitle.trim() || postActionLoading} onClick={() => void savePostEdits()} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{postActionLoading ? 'Saving…' : 'Save changes'}</button><button type="button" onClick={() => setEditingPost(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Cancel</button></div>
+            </div>
+          )}
+          {postActionError && <p role="alert" className="mt-3 text-sm text-rose-600">{postActionError}</p>}
 
           {post.image_url && (
             <img
@@ -335,6 +392,7 @@ export default function PostPage() {
                 comment={comment}
                 postId={post.id}
                 onReplyAdded={handleReplyAdded}
+                canModerate={canModerate}
               />
             ))
           )}

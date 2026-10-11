@@ -33,6 +33,31 @@ class UserOut(BaseModel):
         from_attributes = True
 
 
+class PublicUserOut(BaseModel):
+    id: UUID
+    username: str
+    avatar_url: Optional[str]
+    bio: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProfileOut(BaseModel):
+    id: UUID
+    username: str
+    avatar_url: Optional[str]
+    bio: Optional[str]
+    created_at: datetime
+    followers_count: int = 0
+    following_count: int = 0
+
+
+class FollowStatusOut(BaseModel):
+    is_following: bool
+
+
 class CommunityCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -69,6 +94,9 @@ class PostOut(BaseModel):
     created_at: datetime
     author: Optional[UserOut] = None
     user_vote: int = 0
+    is_saved: bool = False
+    likes_count: int = 0
+    liked_by_me: bool = False
 
     class Config:
         from_attributes = True
@@ -89,6 +117,7 @@ class CommentOut(BaseModel):
     upvotes: int
     created_at: datetime
     author: Optional[UserOut] = None
+    user_vote: int = 0
     replies: list["CommentOut"] = []
 
     class Config:
@@ -114,3 +143,31 @@ class MessageOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PostUpdate(BaseModel):
+    title: str
+    content: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class NotificationOut(BaseModel):
+    id: UUID
+    actor_id: Optional[UUID]
+    notification_type: str
+    post_id: Optional[UUID]
+    comment_id: Optional[UUID]
+    message: str
+    is_read: bool
+    created_at: datetime
+    actor_username: Optional[str] = None
+
+
+class CommentUpdate(BaseModel):
+    content: str
+
+
+class ProfileUpdate(BaseModel):
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None

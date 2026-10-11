@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import api from '../lib/api'
 import { Message, User } from '../types'
 import { useAuthStore } from '../store/authStore'
@@ -15,6 +15,8 @@ export default function MessagesPage() {
   const [activeUser, setActiveUser] = useState<User | null>(null)
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const { sendMessage } = useWebSocket((msg) => {
@@ -47,8 +49,15 @@ export default function MessagesPage() {
   }, [currentUser?.id])
 
   useEffect(() => {
-    if (!userId) return
+    if (!userId) {
+      setActiveUser(null)
+      setMessages([])
+      return
+    }
+    setActiveUser(null)
+    setMessages([])
     setError(null)
+    setLoadingHistory(true)
     Promise.all([
       api.get(`/users/${userId}`),
       api.get(`/messages/history/${userId}`)
@@ -58,6 +67,7 @@ export default function MessagesPage() {
         setMessages(msgRes.data)
       })
       .catch(() => setError('Failed to load messages.'))
+      .finally(() => setLoadingHistory(false))
   }, [userId])
 
   useEffect(() => {
@@ -66,8 +76,16 @@ export default function MessagesPage() {
 
   const handleSend = () => {
     if (!input.trim() || !activeUser) return
-    sendMessage(activeUser.id, input.trim())
+    setSending(true)
+    const sent = sendMessage(activeUser.id, input.trim())
+    if (!sent) {
+      setError('Connecting to chat… Please wait a moment and try sending again.')
+      setSending(false)
+      return
+    }
+    setError(null)
     setInput('')
+    setSending(false)
   }
 
   const uniqueUsers = Array.from(
@@ -95,9 +113,7 @@ export default function MessagesPage() {
               onClick={() => navigate(`/messages/${otherId}`)}
               className={`w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-50 text-sm ${activeUser?.id === otherId ? 'bg-brand-50' : ''}`}
             >
-              <span className="font-medium text-gray-800">
-                {usernames[otherId] ?? otherId.slice(0, 8) + '...'}
-              </span>
+              <span className="flex items-center gap-2 font-medium text-gray-800"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-xs font-bold text-blue-700">{(usernames[otherId] ?? '?').charAt(0).toUpperCase()}</span>{usernames[otherId] ?? otherId.slice(0, 8) + '...'}</span>
               <p className="text-xs text-gray-500 truncate">{m.content}</p>
             </button>
           )
@@ -111,17 +127,18 @@ export default function MessagesPage() {
           </div>
         ) : (
           <>
-            <div className="px-4 py-3 border-b border-gray-100 font-medium text-sm text-gray-900">
-              {activeUser.username}
-            </div>
+            <div className="flex items-center gap-3 border-b border-gray-100 px-4 py-3"><div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-blue-50 font-bold text-blue-700">{activeUser.avatar_url ? <img src={activeUser.avatar_url} alt="" className="h-full w-full object-cover"/> : activeUser.username.charAt(0).toUpperCase()}</div><div className="min-w-0"><Link to={`/u/${encodeURIComponent(activeUser.username)}`} className="font-semibold text-gray-900 hover:text-blue-700">{activeUser.username}</Link><p className="text-xs text-gray-500">Direct message</p></div></div>
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
               {error && <p className="text-xs text-red-500 text-center">{error}</p>}
+              {loadingHistory && <p className="py-3 text-center text-xs text-gray-400">Loading message history…</p>}
+              {!loadingHistory && messages.length === 0 && <p className="py-8 text-center text-sm text-gray-400">No messages yet. Say hello 👋</p>}
               {messages.map((msg) => {
                 const isMine = msg.sender_id === currentUser?.id
                 return (
                   <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-xs px-3 py-2 rounded-2xl text-sm ${isMine ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
-                      {msg.content}
+                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm sm:max-w-md ${isMine ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                      <p className={`mt-1 text-right text-[10px] ${isMine ? 'text-blue-100' : 'text-gray-400'}`}>{new Date(msg.sent_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                     </div>
                   </div>
                 )
@@ -138,9 +155,10 @@ export default function MessagesPage() {
               />
               <button
                 onClick={handleSend}
-                className="bg-brand-600 text-white px-4 py-2 rounded-full text-sm hover:bg-brand-700"
+                disabled={!input.trim() || sending}
+                className="bg-brand-600 text-white px-4 py-2 rounded-full text-sm hover:bg-brand-700 disabled:opacity-50"
               >
-                Send
+                {sending ? 'Sending…' : 'Send'}
               </button>
             </div>
           </>

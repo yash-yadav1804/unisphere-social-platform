@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { User } from '../types'
+import type { User } from '../types'
 import api from '../lib/api'
 
 interface AuthState {
@@ -9,6 +9,7 @@ interface AuthState {
   register: (username: string, email: string, password: string) => Promise<void>
   logout: () => void
   fetchMe: () => Promise<void>
+  updateUser: (user: Partial<User>) => void
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -17,9 +18,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   login: async (email, password) => {
     const res = await api.post('/auth/login', { email, password })
+
     localStorage.setItem('access_token', res.data.access_token)
     localStorage.setItem('refresh_token', res.data.refresh_token)
-    const me = await api.get('/auth/me')
+
+    const me = await api.get<User>('/auth/me')
     set({ user: me.data })
   },
 
@@ -35,10 +38,15 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   fetchMe: async () => {
     try {
-      const res = await api.get('/auth/me')
+      const res = await api.get<User>('/auth/me')
       set({ user: res.data })
     } catch {
       set({ user: null })
     }
   },
+
+  updateUser: (updates) =>
+    set((state) => ({
+      user: state.user ? { ...state.user, ...updates } : null,
+    })),
 }))

@@ -134,7 +134,7 @@ export default function HomePage() {
                 and connect with people who share your interests.
               </p>
               <Link
-                to="/search?q="
+                to="/communities"
                 className="mt-6 inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
               >
                 Explore communities
@@ -144,10 +144,23 @@ export default function HomePage() {
             <div className="space-y-4">
               {posts.map((post) => (
                 <PostCard
-                  key={post.id}
-                  post={post}
-                  onVote={() => setRefreshKey((key) => key + 1)}
-                />
+  key={post.id}
+  post={post}
+  onVote={(postId, result) => {
+    setPosts((currentPosts) =>
+      currentPosts.map((currentPost) =>
+        currentPost.id === postId
+          ? {
+              ...currentPost,
+              user_vote: result.user_vote,
+              upvotes: result.upvotes ?? currentPost.upvotes,
+              downvotes: result.downvotes ?? currentPost.downvotes,
+            }
+          : currentPost
+      )
+    )
+  }}
+/>
               ))}
             </div>
           )}
@@ -195,7 +208,7 @@ export default function HomePage() {
             )}
 
             <Link
-              to="/search?q="
+              to="/communities"
               className="mt-5 block rounded-xl border border-slate-200 px-4 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
             >
               Browse all communities

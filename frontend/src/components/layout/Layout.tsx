@@ -1,12 +1,31 @@
 
-import { FormEvent, useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { FormEvent, useEffect, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import api from '../../lib/api'
 import { useAuthStore } from '../../store/authStore'
 
 export default function Layout() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const [search, setSearch] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshUnreadCount = () => {
+      if (!user) { setUnreadCount(0); return }
+      api.get<{ count: number }>('/notifications/unread-count')
+        .then((response) => { if (!cancelled) setUnreadCount(response.data.count) })
+        .catch(() => { if (!cancelled) setUnreadCount(0) })
+    }
+    refreshUnreadCount()
+    window.addEventListener('notifications-updated', refreshUnreadCount)
+    return () => {
+      cancelled = true
+      window.removeEventListener('notifications-updated', refreshUnreadCount)
+    }
+  }, [user, location.pathname])
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -77,12 +96,12 @@ export default function Layout() {
                 >
                   Messages
                 </Link>
-                <Link
-                  to={`/u/${user.username}`}
-                  className="max-w-28 truncate rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                >
-                  {user.username}
+                <Link to="/saved" className="hidden rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 md:block">Saved</Link>
+                <Link to="/notifications" className="relative rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100">
+                  Notifications
+                  {unreadCount > 0 && <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
                 </Link>
+                <Link to={`/u/${encodeURIComponent(user.username)}`} className="flex max-w-36 items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"><span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 text-blue-700">{user.avatar_url ? <img src={user.avatar_url} alt="" className="h-full w-full object-cover"/> : user.username.charAt(0).toUpperCase()}</span><span className="truncate">{user.username}</span></Link>
                 <button
                   type="button"
                   onClick={() => {

@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+
 from sqlalchemy import (
     String,
     Text,
@@ -10,8 +11,10 @@ from sqlalchemy import (
     Enum,
     Uuid,
     UniqueConstraint,
+    CheckConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.db.session import Base
 
 
@@ -32,10 +35,14 @@ class User(Base):
         "CommunityMember", back_populates="user"
     )
     sent_messages: Mapped[list["Message"]] = relationship(
-        "Message", foreign_keys="Message.sender_id", back_populates="sender"
+        "Message",
+        foreign_keys="Message.sender_id",
+        back_populates="sender",
     )
     received_messages: Mapped[list["Message"]] = relationship(
-        "Message", foreign_keys="Message.receiver_id", back_populates="receiver"
+        "Message",
+        foreign_keys="Message.receiver_id",
+        back_populates="receiver",
     )
 
 
@@ -119,7 +126,9 @@ class Comment(Base):
     author: Mapped["User"] = relationship("User", back_populates="comments")
     replies: Mapped[list["Comment"]] = relationship("Comment", back_populates="parent")
     parent: Mapped["Comment | None"] = relationship(
-        "Comment", back_populates="replies", remote_side="Comment.id"
+        "Comment",
+        back_populates="replies",
+        remote_side="Comment.id",
     )
 
 
@@ -134,6 +143,16 @@ class Vote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class PostLike(Base):
+    __tablename__ = "post_likes"
+    __table_args__ = (UniqueConstraint("user_id", "post_id", name="uq_post_likes_user_post"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    post_id: Mapped[uuid.UUID] = mapped_column(Uuid(), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Message(Base):
     __tablename__ = "messages"
 
@@ -145,8 +164,80 @@ class Message(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     sender: Mapped["User"] = relationship(
-        "User", foreign_keys=[sender_id], back_populates="sent_messages"
+        "User",
+        foreign_keys=[sender_id],
+        back_populates="sent_messages",
     )
     receiver: Mapped["User"] = relationship(
-        "User", foreign_keys=[receiver_id], back_populates="received_messages"
+        "User",
+        foreign_keys=[receiver_id],
+        back_populates="received_messages",
     )
+
+
+class Follow(Base):
+    __tablename__ = "follows"
+    __table_args__ = (
+        UniqueConstraint(
+            "follower_id",
+            "following_id",
+            name="uq_follows_follower_following",
+        ),
+        CheckConstraint(
+            "follower_id <> following_id",
+            name="ck_follows_no_self_follow",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
+    follower_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    following_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+
+class SavedPost(Base):
+    __tablename__ = "saved_posts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "post_id", name="uq_saved_posts_user_post"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(), primary_key=True, default=uuid.uuid4)
+    recipient_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    notification_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    post_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("posts.id", ondelete="CASCADE"), nullable=True
+    )
+    comment_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("comments.id", ondelete="CASCADE"), nullable=True
+    )
+    message: Mapped[str] = mapped_column(String(300), nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

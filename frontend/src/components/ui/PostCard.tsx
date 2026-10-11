@@ -7,7 +7,14 @@ import { useAuthStore } from '../../store/authStore'
 
 interface Props {
   post: Post
-  onVote?: (postId: string, value: number) => void
+  onVote?: (
+  postId: string,
+  result: {
+    user_vote: number
+    upvotes: number | null
+    downvotes: number | null
+  }
+) => void
 }
 
 type VotePost = Post & {
@@ -30,6 +37,11 @@ export default function PostCard({ post, onVote }: Props) {
   const [userVote, setUserVote] = useState(votePost.user_vote ?? 0)
   const [upvotes, setUpvotes] = useState(post.upvotes)
   const [downvotes, setDownvotes] = useState(post.downvotes)
+  const [isSaved, setIsSaved] = useState(Boolean(post.is_saved))
+  const [saving, setSaving] = useState(false)
+  const [liked, setLiked] = useState(Boolean(post.liked_by_me))
+  const [likesCount, setLikesCount] = useState(post.likes_count ?? 0)
+  const [liking, setLiking] = useState(false)
 
   const score = upvotes - downvotes
 
@@ -37,7 +49,10 @@ export default function PostCard({ post, onVote }: Props) {
     setUserVote(votePost.user_vote ?? 0)
     setUpvotes(post.upvotes)
     setDownvotes(post.downvotes)
-  }, [post.id, post.upvotes, post.downvotes, votePost.user_vote])
+    setIsSaved(Boolean(post.is_saved))
+    setLiked(Boolean(post.liked_by_me))
+    setLikesCount(post.likes_count ?? 0)
+  }, [post.id, post.upvotes, post.downvotes, votePost.user_vote, post.is_saved])
 
   const vote = async (value: 1 | -1) => {
     if (!user) {
@@ -66,11 +81,48 @@ export default function PostCard({ post, onVote }: Props) {
         setDownvotes(result.downvotes)
       }
 
-      onVote?.(post.id, value)
+      onVote?.(post.id, result)
     } catch {
       setError('Vote failed. Please try again.')
     } finally {
       setVoting(false)
+    }
+  }
+
+  const toggleLike = async () => {
+    if (!user) { setError('Please log in to like posts.'); return }
+    if (liking) return
+    setLiking(true)
+    setError('')
+    try {
+      const response = await api.post<{ liked_by_me: boolean; likes_count: number }>(`/posts/${post.id}/like`)
+      setLiked(response.data.liked_by_me)
+      setLikesCount(response.data.likes_count)
+    } catch {
+      setError('Could not update like. Please try again.')
+    } finally { setLiking(false) }
+  }
+
+  const toggleSave = async () => {
+    if (!user) {
+      setError('Please log in to save posts.')
+      return
+    }
+    if (saving) return
+    setSaving(true)
+    setError('')
+    try {
+      if (isSaved) {
+        await api.delete(`/saved-posts/${post.id}`)
+        setIsSaved(false)
+      } else {
+        await api.put(`/saved-posts/${post.id}`)
+        setIsSaved(true)
+      }
+    } catch {
+      setError('Could not update saved posts. Please try again.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -121,20 +173,9 @@ export default function PostCard({ post, onVote }: Props) {
         </div>
 
         <div className="min-w-0 flex-1 p-5">
-          <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-            <span className="font-semibold text-blue-700">
-              Unisphere Discussion
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              Posted by{' '}
-              <Link
-                to={`/u/${post.author?.username}`}
-                className="font-medium text-slate-700 hover:text-blue-700 hover:underline"
-              >
-                {post.author?.username ?? 'Unknown user'}
-              </Link>
-            </span>
+          <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+            <Link to={post.author?.username ? `/u/${encodeURIComponent(post.author.username)}` : '#'} className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-50 font-bold text-blue-700">{post.author?.avatar_url ? <img src={post.author.avatar_url} alt="" className="h-full w-full object-cover"/> : (post.author?.username ?? 'U').charAt(0).toUpperCase()}</Link>
+            <div className="min-w-0"><span className="font-semibold text-blue-700">Unisphere Discussion</span><span aria-hidden="true"> · </span><span>Posted by <Link to={`/u/${encodeURIComponent(post.author?.username ?? '')}`} className="font-medium text-slate-700 hover:text-blue-700 hover:underline">{post.author?.username ?? 'Unknown user'}</Link></span><span aria-hidden="true"> · </span><time dateTime={post.created_at}>{new Date(post.created_at).toLocaleDateString()}</time></div>
           </div>
 
           <Link
@@ -158,6 +199,27 @@ export default function PostCard({ post, onVote }: Props) {
               <span aria-hidden="true">▤</span>
               View discussion
             </Link>
+            <button
+              type="button"
+              onClick={() => void toggleLike()}
+              disabled={liking}
+              aria-label={liked ? 'Unlike post' : 'Like post'}
+              aria-pressed={liked}
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50 ${liked ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600 hover:bg-rose-50 hover:text-rose-600'}`}
+            >
+              <span aria-hidden="true" className="text-base">{liked ? '♥' : '♡'}</span> {likesCount} {likesCount === 1 ? 'Like' : 'Likes'}
+            </button>
+            {user && (
+              <button
+                type="button"
+                onClick={() => void toggleSave()}
+                disabled={saving}
+                aria-pressed={isSaved}
+                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50 ${isSaved ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700'}`}
+              >
+                {saving ? 'Saving…' : isSaved ? '★ Saved' : '☆ Save'}
+              </button>
+            )}
           </div>
 
           {error && (
