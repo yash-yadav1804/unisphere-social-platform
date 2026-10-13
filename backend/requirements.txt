@@ -4,6 +4,7 @@ sqlalchemy[asyncio]
 alembic
 asyncpg
 psycopg2-binary
+psycopg[binary]
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
