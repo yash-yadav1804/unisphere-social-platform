@@ -24,3 +24,5 @@ dist/
 
 # User-uploaded files
 backend/uploads/
+
+unisphere-backup.dump

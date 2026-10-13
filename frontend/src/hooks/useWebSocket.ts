@@ -1,124 +1,149 @@
 
-import { useEffect, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { Message } from '../types'
 
-type WebSocketMessage = {
-  receiver_id: string
-  content: string
+type ServerError = {
+  type?: string
+  detail?: string
 }
 
-export function useWebSocket(
-  onMessage: (msg: Message) => void,
-  onConnected?: () => void,
-) {
-  const ws = useRef<WebSocket | null>(null)
+type UseWebSocketOptions = {
+  onMessage: (message: Message) => void
+  onConnected?: () => void
+  onError?: (message: string) => void
+}
+
+export function useWebSocket({
+  onMessage,
+  onConnected,
+  onError,
+}: UseWebSocketOptions) {
+  const socketRef = useRef<WebSocket | null>(null)
   const onMessageRef = useRef(onMessage)
   const onConnectedRef = useRef(onConnected)
-  const reconnectTimer = useRef<number | null>(null)
-  const reconnectAttempts = useRef(0)
-  const queue = useRef<WebSocketMessage[]>([])
-  const mounted = useRef(false)
+  const onErrorRef = useRef(onError)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const reconnectAttemptRef = useRef(0)
+  const mountedRef = useRef(false)
 
   useEffect(() => {
     onMessageRef.current = onMessage
-  }, [onMessage])
-
-  useEffect(() => {
     onConnectedRef.current = onConnected
-  }, [onConnected])
+    onErrorRef.current = onError
+  }, [onMessage, onConnected, onError])
 
   const connect = useCallback(() => {
-    if (!mounted.current) return
+    if (!mountedRef.current) return
 
-    const existing = ws.current
+    const token = localStorage.getItem('access_token')
+    if (!token) return
+
+    const wsBase = (
+      import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
+    ).replace(/\/+$/, '')
+
+    const currentSocket = socketRef.current
 
     if (
-      existing &&
-      (existing.readyState === WebSocket.CONNECTING ||
-        existing.readyState === WebSocket.OPEN)
+      currentSocket &&
+      (currentSocket.readyState === WebSocket.OPEN ||
+        currentSocket.readyState === WebSocket.CONNECTING)
     ) {
       return
     }
 
-    const token = localStorage.getItem('access_token')
+    let socket: WebSocket
 
-    if (!token) return
+    try {
+      socket = new WebSocket(
+        `${wsBase}/messages/ws/${encodeURIComponent(token)}`,
+      )
+    } catch {
+      scheduleReconnect()
+      return
+    }
 
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
-    const socket = new WebSocket(
-      `${wsUrl.replace(/\/$/, '')}/messages/ws/${token}`,
-    )
-
-    ws.current = socket
+    socketRef.current = socket
 
     socket.onopen = () => {
-      if (ws.current !== socket || !mounted.current) {
-        socket.close()
-        return
-      }
-
-      reconnectAttempts.current = 0
-
-      while (queue.current.length > 0 && socket.readyState === WebSocket.OPEN) {
-        const message = queue.current[0]
-
-        try {
-          socket.send(JSON.stringify(message))
-          queue.current.shift()
-        } catch {
-          break
-        }
-      }
-
+      reconnectAttemptRef.current = 0
       onConnectedRef.current?.()
     }
 
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as Message
-        onMessageRef.current(message)
+        const data = JSON.parse(event.data) as Message | ServerError
+
+        if (
+          typeof data === 'object' &&
+          data !== null &&
+          'type' in data &&
+          data.type === 'error'
+        ) {
+          onErrorRef.current?.(
+            (data as ServerError).detail || 'Message could not be sent.',
+          )
+          return
+        }
+
+        if (
+          typeof data === 'object' &&
+          data !== null &&
+          'id' in data &&
+          'sender_id' in data &&
+          'receiver_id' in data &&
+          'content' in data
+        ) {
+          onMessageRef.current(data as Message)
+        }
       } catch {
-        console.error('Received an invalid WebSocket message.')
+        onErrorRef.current?.('Received an invalid message from the server.')
       }
     }
 
     socket.onerror = () => {
-      // onclose handles reconnection.
+      // Browsers expose limited WebSocket error details.
+      onErrorRef.current?.('Chat connection encountered an error.')
     }
 
     socket.onclose = () => {
-      if (ws.current !== socket || !mounted.current) return
+      if (socketRef.current === socket) {
+        socketRef.current = null
+        scheduleReconnect()
+      }
+    }
 
-      ws.current = null
+    function scheduleReconnect() {
+      if (!mountedRef.current || reconnectTimerRef.current !== null) return
 
       const delay = Math.min(
-        1000 * 2 ** reconnectAttempts.current,
+        1000 * 2 ** reconnectAttemptRef.current,
         15000,
       )
 
-      reconnectAttempts.current += 1
+      reconnectAttemptRef.current += 1
 
-      reconnectTimer.current = window.setTimeout(() => {
-        reconnectTimer.current = null
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null
         connect()
       }, delay)
     }
   }, [])
 
   useEffect(() => {
-    mounted.current = true
+    mountedRef.current = true
     connect()
 
     return () => {
-      mounted.current = false
+      mountedRef.current = false
 
-      if (reconnectTimer.current !== null) {
-        window.clearTimeout(reconnectTimer.current)
-        reconnectTimer.current = null
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
       }
 
-      const socket = ws.current
-      ws.current = null
+      const socket = socketRef.current
+      socketRef.current = null
 
       if (socket) {
         socket.onclose = null
@@ -129,33 +154,19 @@ export function useWebSocket(
 
   const sendMessage = useCallback(
     (receiver_id: string, content: string): boolean => {
-      const message = {
-        receiver_id,
-        content: content.trim(),
-      }
+      const socket = socketRef.current
 
-      if (!message.receiver_id || !message.content) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
         return false
       }
 
-      const socket = ws.current
-
-      if (socket?.readyState === WebSocket.OPEN) {
-        try {
-          socket.send(JSON.stringify(message))
-          return true
-        } catch {
-          queue.current.push(message)
-          return true
-        }
-      }
-
-      if (socket?.readyState === WebSocket.CONNECTING) {
-        queue.current.push(message)
+      try {
+        socket.send(JSON.stringify({ receiver_id, content }))
         return true
+      } catch {
+        onErrorRef.current?.('Message could not be sent. Please try again.')
+        return false
       }
-
-      return false
     },
     [],
   )
