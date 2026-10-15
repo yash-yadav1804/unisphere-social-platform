@@ -36,6 +36,7 @@ app.add_middleware(
         "https://unisphere.pages.dev",
         "https://unisphere-zeta-five.vercel.app",
         "https://unisphere-epoxux0ck-yash-yadav1804s-projects.vercel.app",
+        "https://unisphere-atle51xr5-yash-yadav1804s-projects.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
