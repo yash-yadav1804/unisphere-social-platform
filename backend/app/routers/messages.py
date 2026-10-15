@@ -1,7 +1,8 @@
 import json
+import logging
 import uuid as _uuid
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from jose import JWTError
 from sqlalchemy import and_, or_, select
 
@@ -13,6 +14,8 @@ from app.schemas.schemas import MessageOut
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
+logger = logging.getLogger(__name__)
+
 
 class ConnectionManager:
     def __init__(self):
@@ -21,22 +24,35 @@ class ConnectionManager:
     async def connect(self, user_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active[user_id] = websocket
+        logger.info("WebSocket connected: user_id=%s", user_id)
 
     def disconnect(self, user_id: str, websocket: WebSocket):
-        # Do not remove a newer connection if an older socket disconnects.
+        # Do not remove a newer connection when an older socket closes.
         if self.active.get(user_id) is websocket:
             self.active.pop(user_id, None)
+            logger.info("WebSocket disconnected: user_id=%s", user_id)
 
-    async def send_to(self, user_id: str, data: dict):
+    async def send_to(self, user_id: str, data: dict) -> bool:
         websocket = self.active.get(user_id)
+
         if websocket is None:
-            return
+            logger.warning(
+                "Message recipient/sender is not connected: user_id=%s",
+                user_id,
+            )
+            return False
 
         try:
-            await websocket.send_text(json.dumps(data))
+            await websocket.send_json(data)
+            return True
         except Exception:
+            logger.exception(
+                "Failed to deliver WebSocket message: user_id=%s",
+                user_id,
+            )
             if self.active.get(user_id) is websocket:
                 self.active.pop(user_id, None)
+            return False
 
 
 manager = ConnectionManager()
@@ -63,7 +79,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
             await websocket.close(code=1008)
             return
 
-        # Ensure the token subject is a valid user UUID.
         user_uuid = _uuid.UUID(str(user_id))
         user_id = str(user_uuid)
 
@@ -121,36 +136,58 @@ async def websocket_endpoint(websocket: WebSocket, token: str):
                 )
                 continue
 
-            async with AsyncSessionLocal() as db:
-                receiver = await db.get(User, receiver_uuid)
+            try:
+                async with AsyncSessionLocal() as db:
+                    receiver = await db.get(User, receiver_uuid)
 
-                if receiver is None:
-                    await websocket.send_json(
-                        {"type": "error", "detail": "Recipient not found."}
+                    if receiver is None:
+                        await websocket.send_json(
+                            {"type": "error", "detail": "Recipient not found."}
+                        )
+                        continue
+
+                    message = Message(
+                        sender_id=user_uuid,
+                        receiver_id=receiver_uuid,
+                        content=content,
                     )
-                    continue
+                    db.add(message)
+                    await db.commit()
+                    await db.refresh(message)
 
-                message = Message(
-                    sender_id=user_uuid,
-                    receiver_id=receiver_uuid,
-                    content=content,
+                    message_payload = serialize_message(message)
+
+            except Exception:
+                logger.exception(
+                    "Failed to save message: sender=%s receiver=%s",
+                    user_id,
+                    str(receiver_uuid),
                 )
-                db.add(message)
-                await db.commit()
-                await db.refresh(message)
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "detail": "Message could not be saved. Please try again.",
+                    }
+                )
+                continue
 
-                message_payload = serialize_message(message)
+            logger.info(
+                "Message saved: id=%s sender=%s receiver=%s",
+                message_payload["id"],
+                user_id,
+                str(receiver_uuid),
+            )
 
-            # Deliver the same saved message to sender and recipient.
-            # Each client filters it to the currently selected conversation.
+            # Send the saved message to both connected users.
             await manager.send_to(user_id, message_payload)
             await manager.send_to(str(receiver_uuid), message_payload)
 
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket closed by client: user_id=%s", user_id)
+
     except Exception:
-        # Avoid leaving a broken connection registered.
-        pass
+        logger.exception("Unexpected WebSocket error: user_id=%s", user_id)
+
     finally:
         manager.disconnect(user_id, websocket)
 
@@ -164,13 +201,9 @@ async def message_history(
     try:
         other_uuid = _uuid.UUID(other_user_id)
     except (ValueError, TypeError, AttributeError):
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail="Invalid user ID.")
 
     if other_uuid == current_user.id:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=400,
             detail="Cannot open a conversation with yourself.",

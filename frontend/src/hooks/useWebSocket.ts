@@ -36,11 +36,12 @@ export function useWebSocket({
     if (!mountedRef.current) return
 
     const token = localStorage.getItem('access_token')
+
     if (!token) return
 
-    const wsBase = (
-      import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
-    ).replace(/\/+$/, '')
+    const configuredUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
+
+    const wsBase = configuredUrl.replace(/\/+$/, '')
 
     const currentSocket = socketRef.current
 
@@ -55,9 +56,8 @@ export function useWebSocket({
     let socket: WebSocket
 
     try {
-      socket = new WebSocket(
-        `${wsBase}/messages/ws/${encodeURIComponent(token)}`,
-      )
+      const wsUrl = `${wsBase}/messages/ws/${encodeURIComponent(token)}`
+      socket = new WebSocket(wsUrl)
     } catch {
       scheduleReconnect()
       return
@@ -70,29 +70,31 @@ export function useWebSocket({
       onConnectedRef.current?.()
     }
 
-    socket.onmessage = (event) => {
+    socket.onmessage = (event: MessageEvent<string>) => {
       try {
-        const data = JSON.parse(event.data) as Message | ServerError
+        const data: unknown = JSON.parse(event.data)
 
-        if (
-          typeof data === 'object' &&
-          data !== null &&
-          'type' in data &&
-          data.type === 'error'
-        ) {
+        if (!data || typeof data !== 'object') {
+          return
+        }
+
+        const payload = data as Record<string, unknown>
+
+        if (payload.type === 'error') {
+          const serverError = data as ServerError
+
           onErrorRef.current?.(
-            (data as ServerError).detail || 'Message could not be sent.',
+            serverError.detail || 'Message could not be sent.',
           )
           return
         }
 
         if (
-          typeof data === 'object' &&
-          data !== null &&
-          'id' in data &&
-          'sender_id' in data &&
-          'receiver_id' in data &&
-          'content' in data
+          typeof payload.id === 'string' &&
+          typeof payload.sender_id === 'string' &&
+          typeof payload.receiver_id === 'string' &&
+          typeof payload.content === 'string' &&
+          typeof payload.sent_at === 'string'
         ) {
           onMessageRef.current(data as Message)
         }
@@ -102,7 +104,7 @@ export function useWebSocket({
     }
 
     socket.onerror = () => {
-      // Browsers expose limited WebSocket error details.
+      // Browsers do not expose detailed WebSocket errors.
       onErrorRef.current?.('Chat connection encountered an error.')
     }
 
@@ -114,7 +116,12 @@ export function useWebSocket({
     }
 
     function scheduleReconnect() {
-      if (!mountedRef.current || reconnectTimerRef.current !== null) return
+      if (
+        !mountedRef.current ||
+        reconnectTimerRef.current !== null
+      ) {
+        return
+      }
 
       const delay = Math.min(
         1000 * 2 ** reconnectAttemptRef.current,
@@ -146,6 +153,9 @@ export function useWebSocket({
       socketRef.current = null
 
       if (socket) {
+        socket.onopen = null
+        socket.onmessage = null
+        socket.onerror = null
         socket.onclose = null
         socket.close()
       }

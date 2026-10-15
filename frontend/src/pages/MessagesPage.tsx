@@ -83,6 +83,7 @@ export default function MessagesPage() {
       const withoutMessage = previous.filter(
         (item) => item.id !== message.id,
       )
+
       return [message, ...withoutMessage]
     })
   }, [])
@@ -98,13 +99,11 @@ export default function MessagesPage() {
         `/messages/history/${encodeURIComponent(selectedUser.id)}`,
       )
 
-      // Do not overwrite history if the user switched conversations
-      // while the request was running.
       if (activeUserRef.current?.id !== selectedUser.id) return
 
       setMessages(response.data)
     } catch {
-      // Keep the existing messages visible if refresh temporarily fails.
+      // Keep existing messages visible if refresh temporarily fails.
     }
   }, [])
 
@@ -130,11 +129,11 @@ export default function MessagesPage() {
         setError(null)
       }
 
-      // Refreshing the conversation list also updates the latest message.
       setConversations((previous) => {
         const withoutMessage = previous.filter(
           (item) => item.id !== message.id,
         )
+
         return [message, ...withoutMessage]
       })
     },
@@ -153,11 +152,13 @@ export default function MessagesPage() {
     async function loadConversations() {
       try {
         const response = await api.get<Message[]>('/messages/conversations')
+
         if (cancelled) return
 
         setConversations(response.data)
 
         const currentId = currentUser?.id
+
         const otherIds = [
           ...new Set(
             response.data.map((message) =>
@@ -166,7 +167,7 @@ export default function MessagesPage() {
                 : message.sender_id,
             ),
           ),
-        ]
+        ].filter((id) => id !== currentId)
 
         const results = await Promise.allSettled(
           otherIds.map((id) => api.get<User>(`/users/${id}`)),
@@ -211,6 +212,19 @@ export default function MessagesPage() {
       return
     }
 
+    // Keep a definite string for use inside the async function.
+    const selectedUserId: string = userId
+
+    if (selectedUserId === currentUser?.id) {
+      setActiveUser(null)
+      activeUserRef.current = null
+      setMessages([])
+      setError('You cannot open a conversation with yourself.')
+      setLoadingHistory(false)
+      navigate('/messages', { replace: true })
+      return
+    }
+
     setActiveUser(null)
     activeUserRef.current = null
     setMessages([])
@@ -219,12 +233,9 @@ export default function MessagesPage() {
 
     async function loadSelectedConversation() {
       try {
-        const [userResponse, messageResponse] = await Promise.all([
-          api.get<User>(`/users/${encodeURIComponent(userId!)}`),
-          api.get<Message[]>(
-            `/messages/history/${encodeURIComponent(userId!)}`,
-          ),
-        ])
+        const userResponse = await api.get<User>(
+          `/users/${encodeURIComponent(selectedUserId)}`,
+        )
 
         if (cancelled) return
 
@@ -232,22 +243,33 @@ export default function MessagesPage() {
 
         if (selectedUser.id === currentUser?.id) {
           setError('You cannot open a conversation with yourself.')
+          navigate('/messages', { replace: true })
           return
         }
 
+        const messageResponse = await api.get<Message[]>(
+          `/messages/history/${encodeURIComponent(selectedUser.id)}`,
+        )
+
+        if (cancelled) return
+
         activeUserRef.current = selectedUser
         setActiveUser(selectedUser)
+
         setUsers((previous) => ({
           ...previous,
           [selectedUser.id]: selectedUser,
         }))
+
         setMessages(messageResponse.data)
       } catch {
         if (!cancelled) {
           setError('Failed to load messages. Please try again.')
         }
       } finally {
-        if (!cancelled) setLoadingHistory(false)
+        if (!cancelled) {
+          setLoadingHistory(false)
+        }
       }
     }
 
@@ -256,7 +278,7 @@ export default function MessagesPage() {
     return () => {
       cancelled = true
     }
-  }, [userId, currentUser?.id])
+  }, [userId, currentUser?.id, navigate])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -266,7 +288,14 @@ export default function MessagesPage() {
     const content = input.trim()
     const selectedUser = activeUserRef.current
 
-    if (!content || !selectedUser || sending) return
+    if (
+      !content ||
+      !selectedUser ||
+      selectedUser.id === currentUser?.id ||
+      sending
+    ) {
+      return
+    }
 
     setSending(true)
     setError(null)
@@ -281,7 +310,7 @@ export default function MessagesPage() {
 
     setInput('')
     setSending(false)
-  }, [input, sending, sendMessage])
+  }, [input, sending, sendMessage, currentUser?.id])
 
   const uniqueUsers = Array.from(
     new Map(
@@ -294,11 +323,16 @@ export default function MessagesPage() {
         return [otherId, message] as const
       }),
     ).entries(),
-  )
+  ).filter(([otherId]) => otherId !== currentUser?.id)
 
   return (
-    <div className="flex h-[calc(100vh-80px)] min-h-[400px] overflow-hidden rounded-xl border border-gray-200 bg-white">
-      <aside className="w-64 shrink-0 overflow-y-auto border-r border-gray-200">
+    <div className="flex h-[calc(100dvh-180px)] min-h-[360px] overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-80px)] md:min-h-[400px]">
+      {/* Conversation list: full screen on mobile, sidebar on desktop */}
+      <aside
+        className={`${
+          userId ? 'hidden md:block' : 'block'
+        } w-full shrink-0 overflow-y-auto border-r border-gray-200 md:w-64`}
+      >
         <div className="border-b border-gray-100 p-3">
           <h2 className="text-sm font-semibold text-gray-900">Messages</h2>
         </div>
@@ -310,7 +344,9 @@ export default function MessagesPage() {
         )}
 
         {uniqueUsers.length === 0 && !error && (
-          <p className="p-4 text-xs text-gray-400">No conversations yet.</p>
+          <p className="p-4 text-xs text-gray-400">
+            No conversations yet.
+          </p>
         )}
 
         {uniqueUsers.map(([otherId, message]) => {
@@ -334,6 +370,7 @@ export default function MessagesPage() {
                 />
                 <span className="truncate">{username}</span>
               </span>
+
               <p className="truncate pl-11 text-xs text-gray-500">
                 {message.content}
               </p>
@@ -342,7 +379,12 @@ export default function MessagesPage() {
         })}
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      {/* Chat view: full screen on mobile when a conversation is selected */}
+      <main
+        className={`${
+          userId ? 'flex' : 'hidden md:flex'
+        } min-h-0 min-w-0 flex-1 flex-col`}
+      >
         {!activeUser ? (
           <div className="flex flex-1 items-center justify-center p-4 text-center text-sm text-gray-400">
             {loadingHistory
@@ -351,15 +393,27 @@ export default function MessagesPage() {
           </div>
         ) : (
           <>
-            <header className="flex items-center gap-3 border-b border-gray-100 px-4 py-3">
+            <header className="flex shrink-0 items-center gap-3 border-b border-gray-100 px-3 py-3 sm:px-4">
+              <button
+                type="button"
+                onClick={() => navigate('/messages')}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 md:hidden"
+                aria-label="Back to conversations"
+              >
+                <span aria-hidden="true" className="text-xl">
+                  ←
+                </span>
+              </button>
+
               <Avatar
                 username={activeUser.username}
                 avatarUrl={activeUser.avatar_url}
               />
+
               <div className="min-w-0">
                 <Link
                   to={`/u/${encodeURIComponent(activeUser.username)}`}
-                  className="font-semibold text-gray-900 hover:text-blue-700"
+                  className="break-words font-semibold text-gray-900 hover:text-blue-700"
                 >
                   {activeUser.username}
                 </Link>
@@ -367,7 +421,7 @@ export default function MessagesPage() {
               </div>
             </header>
 
-            <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3 sm:px-4">
               {error && (
                 <p role="alert" className="text-center text-xs text-red-500">
                   {error}
@@ -392,10 +446,12 @@ export default function MessagesPage() {
                 return (
                   <div
                     key={message.id}
-                    className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
+                    className={`flex ${
+                      isMine ? 'justify-end' : 'justify-start'
+                    }`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm sm:max-w-md ${
+                      className={`max-w-[85%] break-words rounded-2xl px-3 py-2 text-sm sm:max-w-md ${
                         isMine
                           ? 'bg-brand-600 text-white'
                           : 'bg-gray-100 text-gray-800'
@@ -404,6 +460,7 @@ export default function MessagesPage() {
                       <p className="whitespace-pre-wrap break-words">
                         {message.content}
                       </p>
+
                       <p
                         className={`mt-1 text-right text-[10px] ${
                           isMine ? 'text-blue-100' : 'text-gray-400'
@@ -429,7 +486,7 @@ export default function MessagesPage() {
                 event.preventDefault()
                 handleSend()
               }}
-              className="flex gap-2 border-t border-gray-100 px-4 py-3"
+              className="flex shrink-0 gap-2 border-t border-gray-100 px-3 py-3 sm:px-4"
             >
               <input
                 value={input}
@@ -438,10 +495,11 @@ export default function MessagesPage() {
                 maxLength={5000}
                 className="min-w-0 flex-1 rounded-full border border-gray-200 px-4 py-2 text-sm focus:border-brand-500 focus:outline-none"
               />
+
               <button
                 type="submit"
                 disabled={!input.trim() || sending}
-                className="rounded-full bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
+                className="shrink-0 rounded-full bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {sending ? 'Sending…' : 'Send'}
               </button>
