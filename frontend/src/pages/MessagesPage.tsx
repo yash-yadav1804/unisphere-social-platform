@@ -1,4 +1,5 @@
 
+import axios from 'axios'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import api from '../lib/api'
@@ -75,7 +76,8 @@ export default function MessagesPage() {
 
       return [...previous, message].sort(
         (a, b) =>
-          new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
+          new Date(a.sent_at).getTime() -
+          new Date(b.sent_at).getTime(),
       )
     })
 
@@ -102,8 +104,18 @@ export default function MessagesPage() {
       if (activeUserRef.current?.id !== selectedUser.id) return
 
       setMessages(response.data)
-    } catch {
-      // Keep existing messages visible if refresh temporarily fails.
+    } catch (err) {
+      // Keep existing messages visible if a refresh temporarily fails.
+      console.error('Message history refresh failed:', {
+        url: axios.isAxiosError(err) ? err.config?.url : undefined,
+        status: axios.isAxiosError(err)
+          ? err.response?.status
+          : undefined,
+        response: axios.isAxiosError(err)
+          ? err.response?.data
+          : undefined,
+        error: err,
+      })
     }
   }, [])
 
@@ -181,12 +193,28 @@ export default function MessagesPage() {
           results.forEach((result) => {
             if (result.status === 'fulfilled') {
               next[result.value.data.id] = result.value.data
+            } else {
+              console.error(
+                'Failed to load conversation user:',
+                result.reason,
+              )
             }
           })
 
           return next
         })
-      } catch {
+      } catch (err) {
+        console.error('Failed to load conversations:', {
+          url: axios.isAxiosError(err) ? err.config?.url : undefined,
+          status: axios.isAxiosError(err)
+            ? err.response?.status
+            : undefined,
+          response: axios.isAxiosError(err)
+            ? err.response?.data
+            : undefined,
+          error: err,
+        })
+
         if (!cancelled) {
           setError('Failed to load conversations.')
         }
@@ -212,7 +240,6 @@ export default function MessagesPage() {
       return
     }
 
-    // Keep a definite string for use inside the async function.
     const selectedUserId: string = userId
 
     if (selectedUserId === currentUser?.id) {
@@ -262,9 +289,23 @@ export default function MessagesPage() {
         }))
 
         setMessages(messageResponse.data)
-      } catch {
+        setError(null)
+      } catch (err) {
         if (!cancelled) {
-          setError('Failed to load messages. Please try again.')
+          console.error('Conversation load failed:', {
+            requestedUserId: selectedUserId,
+            currentUserId: currentUser?.id,
+            url: axios.isAxiosError(err) ? err.config?.url : undefined,
+            status: axios.isAxiosError(err)
+              ? err.response?.status
+              : undefined,
+            response: axios.isAxiosError(err)
+              ? err.response?.data
+              : undefined,
+            error: err,
+          })
+
+          setError('Failed to load messages. Please check the console.')
         }
       } finally {
         if (!cancelled) {
@@ -327,14 +368,15 @@ export default function MessagesPage() {
 
   return (
     <div className="flex h-[calc(100dvh-180px)] min-h-[360px] overflow-hidden rounded-xl border border-gray-200 bg-white md:h-[calc(100vh-80px)] md:min-h-[400px]">
-      {/* Conversation list: full screen on mobile, sidebar on desktop */}
       <aside
         className={`${
           userId ? 'hidden md:block' : 'block'
         } w-full shrink-0 overflow-y-auto border-r border-gray-200 md:w-64`}
       >
         <div className="border-b border-gray-100 p-3">
-          <h2 className="text-sm font-semibold text-gray-900">Messages</h2>
+          <h2 className="text-sm font-semibold text-gray-900">
+            Messages
+          </h2>
         </div>
 
         {error && !userId && (
@@ -379,7 +421,6 @@ export default function MessagesPage() {
         })}
       </aside>
 
-      {/* Chat view: full screen on mobile when a conversation is selected */}
       <main
         className={`${
           userId ? 'flex' : 'hidden md:flex'
@@ -417,7 +458,9 @@ export default function MessagesPage() {
                 >
                   {activeUser.username}
                 </Link>
-                <p className="text-xs text-gray-500">Direct message</p>
+                <p className="text-xs text-gray-500">
+                  Direct message
+                </p>
               </div>
             </header>
 
@@ -434,7 +477,7 @@ export default function MessagesPage() {
                 </p>
               )}
 
-              {!loadingHistory && messages.length === 0 && (
+              {!loadingHistory && messages.length === 0 && !error && (
                 <p className="py-8 text-center text-sm text-gray-400">
                   No messages yet. Say hello 👋
                 </p>
