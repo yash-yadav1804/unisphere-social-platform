@@ -42,6 +42,20 @@ function Avatar({
   )
 }
 
+function formatMessageTime(sentAt: string): string {
+  // Database timestamps without timezone information are stored as UTC.
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(sentAt)
+  const timestamp = hasTimezone ? sentAt : `${sentAt}Z`
+
+  return new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 export default function MessagesPage() {
   const { userId } = useParams<{ userId?: string }>()
   const navigate = useNavigate()
@@ -105,7 +119,6 @@ export default function MessagesPage() {
 
       setMessages(response.data)
     } catch (err) {
-      // Keep existing messages visible if a refresh temporarily fails.
       console.error('Message history refresh failed:', {
         url: axios.isAxiosError(err) ? err.config?.url : undefined,
         status: axios.isAxiosError(err)
@@ -240,7 +253,7 @@ export default function MessagesPage() {
       return
     }
 
-    const selectedUserId: string = userId
+    const selectedUserId = userId
 
     if (selectedUserId === currentUser?.id) {
       setActiveUser(null)
@@ -509,12 +522,7 @@ export default function MessagesPage() {
                           isMine ? 'text-blue-100' : 'text-gray-400'
                         }`}
                       >
-                        {new Date(message.sent_at).toLocaleString([], {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatMessageTime(message.sent_at)}
                       </p>
                     </div>
                   </div>
